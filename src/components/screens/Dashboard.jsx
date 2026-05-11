@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react'
+import { Plus, Settings } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTrips } from '../../hooks/useTrips'
@@ -29,13 +29,24 @@ export default function Dashboard() {
           </p>
         </div>
 
-        <button
-          onClick={() => navigate('/new', { state: { direction: 'forward' } })}
-          aria-label="New trip"
-          className="w-9 h-9 rounded-full bg-navy flex items-center justify-center flex-shrink-0 mt-0.5 hover:bg-navy-hover transition-colors"
-        >
-          <Plus size={18} color="white" strokeWidth={2.5} />
-        </button>
+        <div className="flex items-start gap-2 flex-shrink-0 mt-0.5">
+          <button
+            type="button"
+            onClick={() => navigate('/settings', { state: { direction: 'forward' } })}
+            aria-label="Settings"
+            className="w-9 h-9 rounded-full border border-[#e0ddd8] flex items-center justify-center text-content-secondary hover:bg-[#f1efe8] transition-colors"
+          >
+            <Settings size={18} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/new', { state: { direction: 'forward' } })}
+            aria-label="New trip"
+            className="w-9 h-9 rounded-full bg-navy flex items-center justify-center hover:bg-navy-hover transition-colors"
+          >
+            <Plus size={18} color="white" strokeWidth={2.5} />
+          </button>
+        </div>
       </div>
 
       {/* ── Body ────────────────────────────────────────── */}

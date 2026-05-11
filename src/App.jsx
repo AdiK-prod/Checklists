@@ -1,12 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import Dashboard    from './components/screens/Dashboard'
-import Wizard       from './components/screens/Wizard'
-import TripPage     from './components/screens/TripPage'
-import LoginScreen           from './components/screens/LoginScreen'
-import OnboardingPlaceholder from './components/screens/OnboardingPlaceholder'
+import Dashboard       from './components/screens/Dashboard'
+import Wizard          from './components/screens/Wizard'
+import TripPage        from './components/screens/TripPage'
+import LoginScreen     from './components/screens/LoginScreen'
+import Onboarding      from './components/screens/Onboarding'
+import Settings        from './components/screens/Settings'
+import JoinHousehold   from './components/screens/JoinHousehold'
 
-// ── Loading splash shown while session is being restored ──────
 function AppLoading() {
   return (
     <div className="bg-page min-h-screen flex items-center justify-center">
@@ -15,21 +16,27 @@ function AppLoading() {
   )
 }
 
-// ── Redirect unauthenticated users to /login ──────────────────
 function ProtectedRoute({ children }) {
   const { user, household, loading } = useAuth()
   const location = useLocation()
 
   if (loading) return <AppLoading />
-  if (!user) return <Navigate to="/login" replace state={{ from: location }} />
-  // New users without a household go to onboarding (Module 8)
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   if (!household && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />
   }
   return children
 }
 
-// ── All routes + animated frame ───────────────────────────────
+/** Logged-in users with a household should not see onboarding. */
+function OnboardingGate({ children }) {
+  const { user, household, loading } = useAuth()
+  if (loading) return <AppLoading />
+  if (!user) return <Navigate to="/login" replace />
+  if (household) return <Navigate to="/" replace />
+  return children
+}
+
 function AppRoutes() {
   const location  = useLocation()
   const direction = location.state?.direction
@@ -38,23 +45,33 @@ function AppRoutes() {
     : ''
 
   const isLogin = location.pathname === '/login'
+  const isJoin  = location.pathname === '/join'
+
+  const frameClass =
+    isLogin || isJoin
+      ? 'h-[100dvh] overflow-hidden flex flex-col'
+      : 'min-h-screen md:h-screen md:overflow-y-auto md:overflow-x-hidden'
 
   return (
     <div className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
       <div
         className={
           'relative w-full max-w-[430px] bg-page font-dm-sans md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)] ' +
-          (isLogin
-            ? 'h-[100dvh] overflow-hidden flex flex-col'
-            : 'min-h-screen md:h-screen md:overflow-y-auto md:overflow-x-hidden')
+          frameClass
         }
       >
-        <div key={location.pathname} className={[animClass, isLogin ? 'flex-1 min-h-0 flex flex-col' : ''].join(' ')}>
+        <div
+          key={location.pathname + location.search}
+          className={[animClass, isLogin || isJoin ? 'flex-1 min-h-0 flex flex-col' : ''].join(' ')}
+        >
           <Routes>
-            {/* Public */}
+            <Route path="/join" element={<JoinHousehold />} />
             <Route path="/login" element={<LoginScreen />} />
 
-            {/* Protected */}
+            <Route path="/onboarding" element={
+              <OnboardingGate><Onboarding /></OnboardingGate>
+            } />
+
             <Route path="/" element={
               <ProtectedRoute><Dashboard /></ProtectedRoute>
             } />
@@ -64,22 +81,10 @@ function AppRoutes() {
             <Route path="/trips/:id" element={
               <ProtectedRoute><TripPage /></ProtectedRoute>
             } />
-
-            {/* Placeholder routes for upcoming modules */}
-            <Route path="/onboarding" element={
-              <ProtectedRoute>
-                <OnboardingPlaceholder />
-              </ProtectedRoute>
-            } />
             <Route path="/settings" element={
-              <ProtectedRoute>
-                <div className="min-h-screen bg-page flex items-center justify-center px-4">
-                  <p className="text-14 text-content-secondary">Settings — Module 11</p>
-                </div>
-              </ProtectedRoute>
+              <ProtectedRoute><Settings /></ProtectedRoute>
             } />
 
-            {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
@@ -88,7 +93,6 @@ function AppRoutes() {
   )
 }
 
-// ── Root component ────────────────────────────────────────────
 export default function App() {
   return (
     <BrowserRouter>

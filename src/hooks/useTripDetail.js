@@ -7,7 +7,8 @@ export function useTripDetail(tripId) {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   // Keep raw items in a ref for optimistic update mutations
-  const rawItemsRef = useRef([])
+  const rawItemsRef   = useRef([])
+  const templateIdRef = useRef(null)
 
   useEffect(() => {
     if (!tripId) { setLoading(false); return }
@@ -29,6 +30,7 @@ export function useTripDetail(tripId) {
       if (cancelled) return
       if (error) { setError(error); setLoading(false); return }
       rawItemsRef.current = data.checklist_items || []
+      templateIdRef.current = data.template_id
       setTrip(normalizeTripDetail(data))
       setLoading(false)
     }
@@ -104,21 +106,39 @@ export function useTripDetail(tripId) {
   }, [tripId])
 
   const saveToTemplate = useCallback(async (memberId, itemId) => {
-    rawItemsRef.current = rawItemsRef.current.map(i =>
-      i.id === itemId ? { ...i, saved_to_template: true } : i
-    )
-    setTrip(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        checklists: {
-          ...prev.checklists,
-          [memberId]: (prev.checklists[memberId] || []).map(item =>
-            item.id === itemId ? { ...item, savedToTemplate: true } : item
-          ),
-        },
-      }
-    })
+    const templateId = templateIdRef.current
+    const raw        = rawItemsRef.current.find(i => i.id === itemId)
+    if (!raw) return
+
+    const patchLocal = () => {
+      rawItemsRef.current = rawItemsRef.current.map(i =>
+        i.id === itemId ? { ...i, saved_to_template: true } : i
+      )
+      setTrip(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          checklists: {
+            ...prev.checklists,
+            [memberId]: (prev.checklists[memberId] || []).map(item =>
+              item.id === itemId ? { ...item, savedToTemplate: true } : item
+            ),
+          },
+        }
+      })
+    }
+
+    if (templateId) {
+      const { error: insErr } = await supabase.from('template_items').insert({
+        template_id: templateId,
+        label:       raw.label,
+        category:    raw.category || 'Other',
+        sort_order:  Date.now(),
+      })
+      if (insErr) throw insErr
+    }
+
+    patchLocal()
     await supabase.from('checklist_items').update({ saved_to_template: true }).eq('id', itemId)
   }, [])
 

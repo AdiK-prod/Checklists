@@ -102,6 +102,7 @@ export function normalizeTripDetail(row) {
     name:         row.destination,
     destination:  row.destination,
     tripType:     row.trip_type,
+    templateId:   row.template_id,
     datesFrom:    row.dates_from,
     datesTo:      row.dates_to,
     weather:      row.weather,

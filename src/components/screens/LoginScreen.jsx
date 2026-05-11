@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { Plane, Mail } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 
 export default function LoginScreen() {
   const { user, household, signIn, signUp, signInWithGoogle, resendSignupEmail } = useAuth()
+  const location = useLocation()
 
   const [tab, setTab]                         = useState('signin')
   const [email, setEmail]                     = useState('')
@@ -19,7 +20,11 @@ export default function LoginScreen() {
   const [resendStatus, setResendStatus]       = useState(null)
   const [resendLoading, setResendLoading]     = useState(false)
 
-  if (user) return <Navigate to={household ? '/' : '/onboarding'} replace />
+  if (user) {
+    const from = typeof location.state?.from === 'string' ? location.state.from : null
+    if (from) return <Navigate to={from} replace />
+    return <Navigate to={household ? '/' : '/onboarding'} replace />
+  }
 
   function validate() {
     const errs = {}

@@ -1,16 +1,34 @@
-// Vercel serverless function — stubbed for Module 1.
-// Full implementation with Claude API in Module 9.
-// See blueprint section: "Vercel Serverless Function — AI Suggestions"
+import { runSuggest } from './_suggestCore.js'
 
-import Anthropic from '@anthropic-ai/sdk'
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+function sendJson(res, status, data) {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify(data))
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    return sendJson(res, 405, { error: 'Method not allowed' })
   }
 
-  // TODO Module 9: implement full prompt + parse logic
-  return res.status(503).json({ error: 'Not implemented yet — see Module 9' })
+  let body = req.body
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body)
+    } catch {
+      return sendJson(res, 400, { error: 'Invalid JSON' })
+    }
+  }
+
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) {
+    return sendJson(res, 503, { error: 'AI not configured (ANTHROPIC_API_KEY)' })
+  }
+
+  try {
+    const out = await runSuggest(body, key)
+    return sendJson(res, 200, out)
+  } catch (err) {
+    return sendJson(res, 500, { error: err?.message || 'Suggestion failed' })
+  }
 }
