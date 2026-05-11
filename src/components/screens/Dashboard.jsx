@@ -1,13 +1,10 @@
 import { Plus } from 'lucide-react'
-import { INITIAL_TRIPS } from '../../data/trips'
-import { HOUSEHOLD } from '../../data/household'
 import TripCard from '../ui/TripCard'
 
-// DEMO SCAFFOLDING — replace INITIAL_TRIPS + HOUSEHOLD with useTrips/useHousehold in Module 7
+// DEMO SCAFFOLDING — trips/members come from App.jsx state (seeded from INITIAL_TRIPS/HOUSEHOLD).
+// Module 7 replaces prop drilling with useTrips / useHousehold hooks.
 
-export default function Dashboard({ navigate }) {
-  const trips   = INITIAL_TRIPS
-  const members = HOUSEHOLD.members
+export default function Dashboard({ trips, members, navigate }) {
 
   const upcoming = trips.filter(t => t.status === 'upcoming')
   const archived = trips.filter(t => t.status === 'completed')
