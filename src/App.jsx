@@ -1,7 +1,5 @@
-import { useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { authDebug } from './lib/authDebugLog'
 import Dashboard       from './components/screens/Dashboard'
 import Wizard          from './components/screens/Wizard'
 import TripPage        from './components/screens/TripPage'
@@ -22,63 +20,19 @@ function AppLoading() {
 function ProtectedRoute({ children }) {
   const { user, household, loading, householdLoading } = useAuth()
   const location = useLocation()
-  const gateLogRef = useRef('')
 
-  useEffect(() => {
-    const blocking = loading || (!!user && householdLoading)
-    const snapshot = {
-      gate: 'ProtectedRoute',
-      path: location.pathname,
-      blocking,
-      loading,
-      householdLoading,
-      hasUser: !!user,
-      userId: user?.id ? `${user.id.slice(0, 8)}…` : null,
-      hasHousehold: !!household,
-      householdId: household?.id ? `${household.id.slice(0, 8)}…` : null,
-    }
-    const key = JSON.stringify(snapshot)
-    if (key !== gateLogRef.current) {
-      gateLogRef.current = key
-      authDebug('GATE', snapshot)
-    }
-  }, [user, household, loading, householdLoading, location.pathname])
-
-  if (loading || (user && householdLoading)) return <AppLoading />
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
-  if (!household && location.pathname !== '/onboarding') {
-    return <Navigate to="/onboarding" replace />
+  if (loading || householdLoading) return <AppLoading />
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   }
+  if (!household) return <Navigate to="/onboarding" replace />
   return children
 }
 
-/** Logged-in users with a household should not see onboarding. */
 function OnboardingGate({ children }) {
   const { user, household, loading, householdLoading } = useAuth()
-  const location = useLocation()
-  const gateLogRef = useRef('')
 
-  useEffect(() => {
-    const blocking = loading || (!!user && householdLoading)
-    const snapshot = {
-      gate: 'OnboardingGate',
-      path: location.pathname,
-      blocking,
-      loading,
-      householdLoading,
-      hasUser: !!user,
-      userId: user?.id ? `${user.id.slice(0, 8)}…` : null,
-      hasHousehold: !!household,
-      householdId: household?.id ? `${household.id.slice(0, 8)}…` : null,
-    }
-    const key = JSON.stringify(snapshot)
-    if (key !== gateLogRef.current) {
-      gateLogRef.current = key
-      authDebug('GATE', snapshot)
-    }
-  }, [user, household, loading, householdLoading, location.pathname])
-
-  if (loading || (user && householdLoading)) return <AppLoading />
+  if (loading || householdLoading) return <AppLoading />
   if (!user) return <Navigate to="/login" replace />
   if (household) return <Navigate to="/" replace />
   return children
@@ -108,7 +62,11 @@ function AppRoutes() {
         }
       >
         <div
-          key={location.pathname + location.search}
+          key={
+            location.pathname === '/join'
+              ? `${location.pathname}${location.search}`
+              : location.pathname
+          }
           className={[animClass, isLogin || isJoin ? 'flex-1 min-h-0 flex flex-col' : ''].join(' ')}
         >
           <Routes>
@@ -145,7 +103,9 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <AuthProvider>
         <AppRoutes />
       </AuthProvider>
