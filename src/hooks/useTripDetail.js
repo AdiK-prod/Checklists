@@ -65,7 +65,7 @@ export function useTripDetail(tripId) {
         ...prev,
         checklists: {
           ...prev.checklists,
-          [memberId]: (prev.checklists[memberId] || []).map(item =>
+          [memberId]: asArray(prev.checklists[memberId]).map(item =>
             item.id === itemId ? { ...item, checked: newChecked } : item
           ),
         },
@@ -109,7 +109,7 @@ export function useTripDetail(tripId) {
         ...prev,
         checklists: {
           ...prev.checklists,
-          [memberId]: [...(prev.checklists[memberId] || []), normalized],
+          [memberId]: [...asArray(prev.checklists[memberId]), normalized],
         },
       }
     })
@@ -131,7 +131,7 @@ export function useTripDetail(tripId) {
           ...prev,
           checklists: {
             ...prev.checklists,
-            [memberId]: (prev.checklists[memberId] || []).map(item =>
+            [memberId]: asArray(prev.checklists[memberId]).map(item =>
               item.id === itemId ? { ...item, savedToTemplate: true } : item
             ),
           },

@@ -7,6 +7,7 @@ import { useTemplates } from '../../hooks/useTemplates'
 import { supabase } from '../../lib/supabase'
 import { createTripFromWizard } from '../../lib/tripService'
 import { weatherSummaryForTrip } from '../../lib/tripWeatherSummary'
+import { asArray } from '../../lib/transforms'
 import StepIndicator from '../wizard/StepIndicator'
 import Step1Template from '../wizard/Step1Template'
 import Step2Travellers from '../wizard/Step2Travellers'
@@ -15,7 +16,7 @@ import Step4Suggestions from '../wizard/Step4Suggestions'
 
 function mapAiToWizardSuggestions(apiList, travellerMembers) {
   const ids = travellerMembers.map(m => m.id)
-  return apiList.map((s, i) => {
+  return asArray(apiList).map((s, i) => {
     let assigned = []
     if (s.assignToAll) {
       assigned = [...ids]
@@ -231,7 +232,7 @@ export default function Wizard() {
 
     generateInFlightRef.current = true
     setGenerating(true)
-    const sugg = suggestionsOverride ?? suggestions
+    const sugg = asArray(suggestionsOverride ?? suggestions)
     const accepted = sugg.filter(s => s.checked).length
     const total    = sugg.length
 
@@ -277,7 +278,7 @@ export default function Wizard() {
   }
 
   const kidCount = [...selectedTravellers].filter(id =>
-    members.find(m => m.id === id)?.role === 'kid'
+    asArray(members).find(m => m.id === id)?.role === 'kid'
   ).length
 
   const suggestionSubtitle = `Based on ${tripFields.destination.trim() || 'your trip'}${kidCount > 0 ? ` with ${kidCount} kid${kidCount !== 1 ? 's' : ''}` : ''}.`

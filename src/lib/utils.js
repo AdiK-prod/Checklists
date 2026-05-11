@@ -31,7 +31,7 @@ export function computeProgress(checklists) {
   let total = 0
   let checked = 0
   Object.values(checklists || {}).forEach(items => {
-    ;(items || []).forEach(item => {
+    asArray(items).forEach(item => {
       total++
       if (item.checked) checked++
     })
@@ -55,7 +55,7 @@ export function computeNights(from, to) {
  */
 export function groupByCategory(items) {
   const map = {}
-  ;(items || []).forEach(item => {
+  asArray(items).forEach(item => {
     const cat = item.category || 'Other'
     if (!map[cat]) map[cat] = []
     map[cat].push(item)
@@ -71,7 +71,7 @@ export function groupByCategory(items) {
  */
 export function describeTravellers(travellerIds, members) {
   const ids = asArray(travellerIds)
-  const travellers = (members || []).filter(m => ids.includes(m.id))
+  const travellers = asArray(members).filter(m => ids.includes(m.id))
   const parents = travellers.filter(m => m.role === 'parent')
   const kids    = travellers.filter(m => m.role === 'kid')
 

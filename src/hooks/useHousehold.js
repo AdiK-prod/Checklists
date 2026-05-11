@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { normalizeMember } from '../lib/transforms'
+import { normalizeMember, asArray } from '../lib/transforms'
 
 export function useHousehold(householdId) {
   const [household, setHousehold] = useState(null)
@@ -25,7 +25,7 @@ export function useHousehold(householdId) {
       if (memRes.error) { setError(memRes.error); setLoading(false); return }
 
       setHousehold(hhRes.data)
-      setMembers((memRes.data || []).map(normalizeMember))
+      setMembers(asArray(memRes.data).map(normalizeMember))
       setLoading(false)
     }
 

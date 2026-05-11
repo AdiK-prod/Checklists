@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, Plane, Car, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { asArray } from '../../lib/transforms'
 
 const ICON_MAP = { Plane, Car, Moon }
 const CATEGORIES = ['Documents', 'Clothing', 'Essentials', 'Toiletries', 'Entertainment', 'Medications', 'Other']
@@ -36,9 +37,10 @@ export default function TemplatesScreen() {
       return
     }
 
-    const sorted = (data || []).map((t) => ({
+    const rows = Array.isArray(data) ? data : []
+    const sorted = rows.map((t) => ({
       ...t,
-      template_items: [...(t.template_items || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+      template_items: [...asArray(t.template_items)].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
     }))
     setRows(sorted)
     setLoading(false)
@@ -74,7 +76,7 @@ export default function TemplatesScreen() {
     const label = newLabel.trim()
     if (!label) return
     const tpl = rows.find((r) => r.id === templateId)
-    const maxOrder = (tpl?.template_items || []).reduce((m, i) => Math.max(m, i.sort_order ?? 0), 0)
+    const maxOrder = asArray(tpl?.template_items).reduce((m, i) => Math.max(m, i.sort_order ?? 0), 0)
     const { error } = await supabase.from('template_items').insert({
       template_id: templateId,
       label,
@@ -139,7 +141,7 @@ export default function TemplatesScreen() {
                     <div className="flex-1 min-w-0">
                       <p className="text-14 font-medium text-content-primary truncate">{tpl.name}</p>
                       <p className="text-11 text-content-secondary">
-                        {(tpl.template_items || []).length} items
+                        {asArray(tpl.template_items).length} items
                       </p>
                     </div>
                     {expanded ? <ChevronUp size={18} className="text-content-hint" /> : <ChevronDown size={18} className="text-content-hint" />}
@@ -173,7 +175,7 @@ export default function TemplatesScreen() {
                       )}
 
                       <ul className="space-y-1.5">
-                        {(tpl.template_items || []).map((it) => (
+                        {asArray(tpl.template_items).map((it) => (
                           <li
                             key={it.id}
                             className="flex items-start gap-2 text-13 py-1.5 border-b border-[rgba(0,0,0,0.04)] last:border-0"
