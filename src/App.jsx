@@ -18,10 +18,10 @@ function AppLoading() {
 }
 
 function ProtectedRoute({ children }) {
-  const { user, household, loading } = useAuth()
+  const { user, household, loading, householdLoading } = useAuth()
   const location = useLocation()
 
-  if (loading) return <AppLoading />
+  if (loading || (user && householdLoading)) return <AppLoading />
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   if (!household && location.pathname !== '/onboarding') {
     return <Navigate to="/onboarding" replace />
@@ -31,8 +31,8 @@ function ProtectedRoute({ children }) {
 
 /** Logged-in users with a household should not see onboarding. */
 function OnboardingGate({ children }) {
-  const { user, household, loading } = useAuth()
-  if (loading) return <AppLoading />
+  const { user, household, loading, householdLoading } = useAuth()
+  if (loading || (user && householdLoading)) return <AppLoading />
   if (!user) return <Navigate to="/login" replace />
   if (household) return <Navigate to="/" replace />
   return children

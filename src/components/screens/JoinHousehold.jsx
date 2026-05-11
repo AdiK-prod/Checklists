@@ -6,12 +6,12 @@ import { supabase } from '../../lib/supabase'
 export default function JoinHousehold() {
   const [searchParams] = useSearchParams()
   const token            = searchParams.get('token')?.trim() || ''
-  const { user, household, loading, refreshHousehold } = useAuth()
+  const { user, household, loading, householdLoading, refreshHousehold } = useAuth()
   const navigate         = useNavigate()
   const [busy, setBusy]  = useState(false)
   const [msg, setMsg]    = useState('')
 
-  if (loading) {
+  if (loading || (user && householdLoading)) {
     return (
       <div className="min-h-screen bg-page flex items-center justify-center">
         <p className="text-13 text-content-secondary">Loading…</p>

@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { Plane, Mail } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 
 export default function LoginScreen() {
-  const { user, household, signIn, signUp, signInWithGoogle, resendSignupEmail } = useAuth()
+  const { user, household, loading: authLoading, householdLoading, signIn, signUp, signInWithGoogle, resendSignupEmail } = useAuth()
   const location = useLocation()
 
   const [tab, setTab]                         = useState('signin')
@@ -20,7 +20,31 @@ export default function LoginScreen() {
   const [resendStatus, setResendStatus]       = useState(null)
   const [resendLoading, setResendLoading]     = useState(false)
 
+  useEffect(() => {
+    if (!user) return
+    setAuthError('')
+    setPendingVerifyEmail(null)
+    setResendStatus(null)
+    setFieldErrors({})
+    setLoading(false)
+  }, [user])
+
+  if (authLoading && !user) {
+    return (
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center bg-page px-4">
+        <p className="text-13 text-content-secondary animate-pulse">Loading…</p>
+      </div>
+    )
+  }
+
   if (user) {
+    if (authLoading || householdLoading) {
+      return (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center bg-page px-4">
+          <p className="text-13 text-content-secondary animate-pulse">Signing you in…</p>
+        </div>
+      )
+    }
     const from = typeof location.state?.from === 'string' ? location.state.from : null
     if (from) return <Navigate to={from} replace />
     return <Navigate to={household ? '/' : '/onboarding'} replace />
@@ -57,27 +81,30 @@ export default function LoginScreen() {
     setLoading(true)
     if (tab === 'signin') {
       const { error } = await signIn(email, password)
-      setLoading(false)
-      if (error) setAuthError(mapSignInError(error.message))
+      if (error) {
+        setLoading(false)
+        setAuthError(mapSignInError(error.message))
+      }
       return
     }
 
     const { data, error } = await signUp(email, password)
-    setLoading(false)
     if (error) {
+      setLoading(false)
       setAuthError(error.message)
       return
     }
 
     // Email confirmation required → Supabase returns user but no session
     if (data?.user && !data?.session) {
+      setLoading(false)
       setPendingVerifyEmail(email.trim())
       setPassword('')
       setConfirmPassword('')
       return
     }
 
-    // Immediate session (confirm email disabled) → AuthContext updates → Navigate runs
+    // Immediate session (confirm email disabled) — keep loading until AuthContext + Navigate
   }
 
   function switchTab(t) {
