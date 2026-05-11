@@ -36,12 +36,19 @@ function AppRoutes() {
     : direction === 'back' ? 'screen-back'
     : ''
 
+  const isLogin = location.pathname === '/login'
+
   return (
     <div className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
-      <div className="relative w-full max-w-[430px] bg-page font-dm-sans
-                      md:h-screen md:overflow-y-auto md:overflow-x-hidden
-                      md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)]">
-        <div key={location.pathname} className={animClass}>
+      <div
+        className={
+          'relative w-full max-w-[430px] bg-page font-dm-sans md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)] ' +
+          (isLogin
+            ? 'h-[100dvh] overflow-hidden flex flex-col'
+            : 'min-h-screen md:h-screen md:overflow-y-auto md:overflow-x-hidden')
+        }
+      >
+        <div key={location.pathname} className={[animClass, isLogin ? 'flex-1 min-h-0 flex flex-col' : ''].join(' ')}>
           <Routes>
             {/* Public */}
             <Route path="/login" element={<LoginScreen />} />

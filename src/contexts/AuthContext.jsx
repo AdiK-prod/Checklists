@@ -52,10 +52,19 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut()
   }
 
+  /** Opens Google OAuth; user returns to `redirectTo` with session in URL hash (handled by Supabase client). */
+  async function signInWithGoogle() {
+    const redirectTo = `${window.location.origin}/`
+    return supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo },
+    })
+  }
+
   return (
     <AuthContext.Provider value={{
       user, session, household, loading,
-      signIn, signUp, signOut,
+      signIn, signUp, signOut, signInWithGoogle,
       refreshHousehold: fetchHousehold,
     }}>
       {children}
