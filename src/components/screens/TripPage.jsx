@@ -1,6 +1,22 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  KeyboardSensor,
+  closestCenter,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
   ArrowLeft, MoreVertical, Plane, Car, Moon,
   Sparkles, ChevronDown, GripVertical, Check, BookmarkPlus,
   CloudSun,
@@ -326,24 +342,33 @@ function PersonCard({
 
   const canSaveToTemplate = Boolean(templateId)
 
+  const itemIds = useMemo(() => sortedFlat.map(i => i.id), [sortedFlat])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = sortedFlat.map(i => i.id)
+    const oldIndex = ids.indexOf(active.id)
+    const newIndex = ids.indexOf(over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    onReorderItems(member.id, arrayMove(ids, oldIndex, newIndex))
+  }
+
   const handleAdd = async () => {
     const label = addInput.trim()
     if (!label) return
     setAddInput('')
     const newId = await onAddItem(member.id, label)
     if (newId) setNewItemIds(prev => new Set([...prev, newId]))
-  }
-
-  const handleDropOnItem = (draggedId, targetId) => {
-    if (!draggedId || draggedId === targetId) return
-    const ids = sortedFlat.map(i => i.id)
-    const from = ids.indexOf(draggedId)
-    const to = ids.indexOf(targetId)
-    if (from < 0 || to < 0) return
-    const next = [...ids]
-    next.splice(from, 1)
-    next.splice(to, 0, draggedId)
-    onReorderItems(member.id, next)
   }
 
   const handleSaveToTemplate = async (mId, itemId) => {
@@ -390,42 +415,40 @@ function PersonCard({
       }}>
         <div style={{ overflow: 'hidden' }}>
           <div className="px-[14px] pt-2 pb-[13px]">
-            {sortedFlat.map((item, index) => {
-              const prev = sortedFlat[index - 1]
-              const showCategory = !prev || prev.category !== item.category
-              return (
-                <div key={item.id}>
-                  {showCategory && (
-                    <p
-                      className={[
-                        'text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-1.5',
-                        index > 0 ? 'mt-3' : '',
-                      ].join(' ')}
-                    >
-                      {item.category}
-                    </p>
-                  )}
-                  <ChecklistItemRow
-                    item={item}
-                    showBorder={index < sortedFlat.length - 1}
-                    isNew={newItemIds.has(item.id)}
-                    canSaveToTemplate={canSaveToTemplate}
-                    onToggle={() => onToggleItem(member.id, item.id)}
-                    onSave={() => handleSaveToTemplate(member.id, item.id)}
-                    onDragStart={e => {
-                      e.dataTransfer.setData('text/plain', item.id)
-                      e.dataTransfer.effectAllowed = 'move'
-                    }}
-                    onDragOver={e => e.preventDefault()}
-                    onDrop={e => {
-                      e.preventDefault()
-                      const draggedId = e.dataTransfer.getData('text/plain')
-                      handleDropOnItem(draggedId, item.id)
-                    }}
-                  />
-                </div>
-              )
-            })}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+                {sortedFlat.map((item, index) => {
+                  const prev = sortedFlat[index - 1]
+                  const showCategory = !prev || prev.category !== item.category
+                  return (
+                    <div key={item.id}>
+                      {showCategory && (
+                        <p
+                          className={[
+                            'text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-1.5',
+                            index > 0 ? 'mt-3' : '',
+                          ].join(' ')}
+                        >
+                          {item.category}
+                        </p>
+                      )}
+                      <SortableChecklistRow
+                        item={item}
+                        showBorder={index < sortedFlat.length - 1}
+                        isNew={newItemIds.has(item.id)}
+                        canSaveToTemplate={canSaveToTemplate}
+                        onToggle={() => onToggleItem(member.id, item.id)}
+                        onSave={() => handleSaveToTemplate(member.id, item.id)}
+                      />
+                    </div>
+                  )
+                })}
+              </SortableContext>
+            </DndContext>
 
             {/* Add item row */}
             <div className="flex gap-2 mt-2">
@@ -452,6 +475,40 @@ function PersonCard({
   )
 }
 
+// ── Sortable row (dnd-kit: native HTML5 DnD breaks inside overflow:hidden) ──
+
+function SortableChecklistRow(props) {
+  const { item } = props
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity:   isDragging ? 0.6 : undefined,
+    zIndex:    isDragging ? 2 : undefined,
+    position:  isDragging ? 'relative' : undefined,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <ChecklistItemRow
+        {...props}
+        activatorRef={setActivatorNodeRef}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+      />
+    </div>
+  )
+}
+
 // ── Checklist item row ────────────────────────────────────────
 
 function ChecklistItemRow({
@@ -461,9 +518,9 @@ function ChecklistItemRow({
   canSaveToTemplate,
   onToggle,
   onSave,
-  onDragStart,
-  onDragOver,
-  onDrop,
+  activatorRef,
+  dragAttributes,
+  dragListeners,
 }) {
   // Blueprint / prototype (Module 4): only items created with "Add item" (isManuallyAdded)
   // show BookmarkPlus + "Save to template". Not template copies, not AI rows.
@@ -474,18 +531,17 @@ function ChecklistItemRow({
     <div
       className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
       style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
     >
-      <span
-        draggable
-        onDragStart={onDragStart}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint"
+      <button
+        type="button"
+        ref={activatorRef}
+        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
         aria-label="Drag to reorder"
-        onClick={e => e.stopPropagation()}
+        {...dragAttributes}
+        {...dragListeners}
       >
         <GripVertical size={14} style={{ opacity: 0.45 }} />
-      </span>
+      </button>
 
       <div
         onClick={onToggle}
