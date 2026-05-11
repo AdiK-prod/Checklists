@@ -28,16 +28,23 @@ export default function Onboarding() {
   if (household) return <Navigate to="/" replace />
 
   async function createHouseholdRecord(name) {
+    const { data: { session }, error: sessErr } = await supabase.auth.getSession()
+    if (sessErr) throw sessErr
+    const ownerId = session?.user?.id
+    if (!ownerId) {
+      throw new Error('Your session expired — please sign in again, then continue setup.')
+    }
+
     const { data, error } = await supabase
       .from('households')
-      .insert({ name: name.trim() || DEFAULT_NAME, owner_id: user.id })
+      .insert({ name: name.trim() || DEFAULT_NAME, owner_id: ownerId })
       .select('id')
       .single()
     if (error) throw error
     const hid = data.id
     const { error: huErr } = await supabase.from('household_users').insert({
       household_id: hid,
-      user_id:      user.id,
+      user_id:      ownerId,
       role:         'owner',
     })
     if (huErr) throw huErr
