@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, MoreVertical, Plane, Car, Moon,
   Sparkles, ChevronDown, GripVertical, Check, BookmarkPlus,
+  CloudSun,
 } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
@@ -21,6 +22,7 @@ export default function TripPage() {
   const navigate       = useNavigate()
   const { trip, loading, error, toggleItem, addItem, saveToTemplate } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [weatherOpen, setWeatherOpen] = useState(false)
 
   const isInitialMount  = useRef(true)
   const [animatedProgress, setAnimatedProgress] = useState(0)
@@ -97,6 +99,14 @@ export default function TripPage() {
     return `${parents.length} adult${parents.length !== 1 ? 's' : ''} · ${kids.length} kid${kids.length !== 1 ? 's' : ''}`
   })()
 
+  const weatherText = trip.weather && String(trip.weather).trim()
+  const weatherPreview = (() => {
+    if (!weatherText) return ''
+    const line = weatherText.split('\n')[0].trim()
+    if (line.length <= 96) return line
+    return `${line.slice(0, 93).trimEnd()}…`
+  })()
+
   return (
     <div className="bg-page">
 
@@ -131,7 +141,7 @@ export default function TripPage() {
           </p>
 
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {[trip.weather, travellersDesc].filter(Boolean).map((pill, i) => (
+            {[travellersDesc].filter(Boolean).map((pill, i) => (
               <span
                 key={i}
                 className="text-11 rounded-pill px-[9px] py-[3px]"
@@ -161,6 +171,56 @@ export default function TripPage() {
             </span>
           </div>
         </div>
+
+        {weatherText && (
+          <div className="bg-white rounded-card mb-3 overflow-hidden" style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}>
+            <button
+              type="button"
+              onClick={() => setWeatherOpen(o => !o)}
+              aria-expanded={weatherOpen}
+              className="w-full flex items-start gap-2 px-4 py-3 text-left"
+            >
+              <CloudSun size={18} className="flex-shrink-0 mt-0.5 text-content-secondary" />
+              <span className="flex-1 min-w-0">
+                <span className="block text-13 font-medium text-content-primary">Weather</span>
+                {!weatherOpen && (
+                  <span className="block text-12 text-content-secondary mt-0.5 leading-snug line-clamp-2">
+                    {weatherPreview}
+                  </span>
+                )}
+              </span>
+              <ChevronDown
+                size={18}
+                className="flex-shrink-0 text-content-hint mt-0.5"
+                style={{
+                  transition: 'transform 200ms ease',
+                  transform: weatherOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                }}
+              />
+            </button>
+            <div
+              style={{
+                display: 'grid',
+                transition: 'grid-template-rows 250ms ease',
+                gridTemplateRows: weatherOpen ? '1fr' : '0fr',
+              }}
+            >
+              <div style={{ overflow: 'hidden' }}>
+                <div
+                  className="px-4 pb-3 text-12 text-content-primary leading-relaxed whitespace-pre-wrap"
+                  style={{
+                    borderTop: '0.5px solid rgba(0,0,0,0.06)',
+                    backgroundColor: '#f8f7f4',
+                    maxHeight: 'min(70vh, 28rem)',
+                    overflowY: 'auto',
+                  }}
+                >
+                  {weatherText}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* AI suggestions panel */}
         {aiCount > 0 && (
