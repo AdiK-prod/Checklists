@@ -82,7 +82,7 @@ export default function App() {
     // ── Module 6: desktop frame ──────────────────────────────
     // Mobile:  full-width, standard scroll, page bg #faf8f4
     // Desktop: centred 430px container, h-screen, border+radius, outer bg #ede9e3
-    <div className="bg-page md:bg-[#ede9e3] md:min-h-screen md:flex md:justify-center">
+    <div className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
       <div className="relative w-full max-w-[430px] bg-page font-dm-sans min-h-screen
                       md:h-screen md:overflow-y-auto md:overflow-x-hidden
                       md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)]">
