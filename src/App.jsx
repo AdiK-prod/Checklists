@@ -6,6 +6,7 @@ import TripPage        from './components/screens/TripPage'
 import LoginScreen     from './components/screens/LoginScreen'
 import Onboarding      from './components/screens/Onboarding'
 import Settings        from './components/screens/Settings'
+import TemplatesScreen from './components/screens/TemplatesScreen'
 import JoinHousehold   from './components/screens/JoinHousehold'
 
 function AppLoading() {
@@ -83,6 +84,9 @@ function AppRoutes() {
             } />
             <Route path="/settings" element={
               <ProtectedRoute><Settings /></ProtectedRoute>
+            } />
+            <Route path="/templates" element={
+              <ProtectedRoute><TemplatesScreen /></ProtectedRoute>
             } />
 
             <Route path="*" element={<Navigate to="/" replace />} />

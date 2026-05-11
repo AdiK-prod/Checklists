@@ -18,7 +18,7 @@ export default function Step1Template({ templates, selectedId, onSelect }) {
             <button
               key={tpl.id}
               onClick={() => onSelect(tpl.id)}
-              className="w-full flex items-center gap-3 bg-white rounded-card p-4 text-left transition-colors"
+              className="w-full flex items-center gap-3 bg-white rounded-card p-3 text-left transition-colors"
               style={{ border: `1.5px solid ${isSelected ? '#3d6494' : '#e0ddd8'}` }}
             >
               {/* Icon tile 42×42 */}
@@ -55,8 +55,8 @@ export default function Step1Template({ templates, selectedId, onSelect }) {
         })}
       </div>
 
-      <p className="text-center text-12 text-content-hint mt-4">
-        You can customise items after generation
+      <p className="text-center text-12 text-content-hint mt-2 leading-snug">
+        Edit template names and items anytime in Settings → Pack templates.
       </p>
     </div>
   )

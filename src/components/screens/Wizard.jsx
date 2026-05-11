@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X, ArrowLeft, Sparkles } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
@@ -6,6 +6,7 @@ import { useHousehold } from '../../hooks/useHousehold'
 import { useTemplates } from '../../hooks/useTemplates'
 import { supabase } from '../../lib/supabase'
 import { createTripFromWizard } from '../../lib/tripService'
+import { weatherSummaryForTrip } from '../../lib/tripWeatherSummary'
 import StepIndicator from '../wizard/StepIndicator'
 import Step1Template from '../wizard/Step1Template'
 import Step2Travellers from '../wizard/Step2Travellers'
@@ -58,9 +59,13 @@ export default function Wizard() {
     destination: '',
     datesFrom:   '',
     datesTo:     '',
-    weather:     '',
     tripType:    '',
   })
+
+  const derivedWeather = useMemo(
+    () => weatherSummaryForTrip(tripFields.datesFrom, tripFields.datesTo),
+    [tripFields.datesFrom, tripFields.datesTo]
+  )
   const [fieldErrors, setFieldErrors]         = useState({})
   const aiMetaRef = useRef({ promptSent: '', responseRaw: '', total: 0 })
   const fetchStartedStepRef = useRef(0)
@@ -103,7 +108,7 @@ export default function Wizard() {
       destination: tripFields.destination.trim(),
       datesFrom:   tripFields.datesFrom,
       datesTo:     tripFields.datesTo,
-      weather:     tripFields.weather.trim(),
+      weather:     derivedWeather,
       tripType:    tripFields.tripType.trim(),
       travellers:  travellerMembers.map(m => ({
         name: m.name,
@@ -142,7 +147,7 @@ export default function Wizard() {
     setSuggestions(mapped)
     setAiLoading(false)
     setStep4Ready(true)
-  }, [selectedTemplateId, travellerMembers, tripFields])
+  }, [selectedTemplateId, travellerMembers, tripFields, derivedWeather])
 
   useEffect(() => {
     if (step !== 4) {
@@ -163,8 +168,6 @@ export default function Wizard() {
       if (tripFields.datesFrom && tripFields.datesTo && tripFields.datesTo < tripFields.datesFrom) {
         e.dates = 'End date must be on or after start'
       }
-      if (!tripFields.weather.trim()) e.weather = 'Required'
-      if (!tripFields.tripType.trim()) e.tripType = 'Required'
       setFieldErrors(e)
       if (Object.keys(e).length) return
     }
@@ -235,7 +238,7 @@ export default function Wizard() {
         destination:   tripFields.destination.trim(),
         datesFrom:     tripFields.datesFrom,
         datesTo:       tripFields.datesTo,
-        weather:       tripFields.weather.trim(),
+        weather:       derivedWeather,
         tripType:      tripFields.tripType.trim(),
         suggestions:   sugg,
         aiLog: {
@@ -273,10 +276,12 @@ export default function Wizard() {
 
   const dataLoading = membersLoading || templatesLoading
 
-  return (
-    <div className="flex flex-col h-screen bg-page">
+  const contentScroll = step === 2 || step === 3 || step === 4
 
-      <div className="flex-none flex items-center justify-between px-4 pt-4 pb-2">
+  return (
+    <div className="flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden bg-page">
+
+      <div className="flex-none flex items-center justify-between px-4 pt-3 pb-1.5">
         {step === 1 ? (
           <>
             <button type="button" onClick={goBack} className="text-13 text-content-secondary">Cancel</button>
@@ -303,8 +308,13 @@ export default function Wizard() {
 
       <StepIndicator currentStep={step} totalSteps={4} />
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
-        <div key={step} className="step-fade-in">
+      <div
+        className={[
+          'flex-1 min-h-0 px-4',
+          contentScroll ? 'overflow-y-auto' : 'overflow-hidden flex flex-col',
+        ].join(' ')}
+      >
+        <div key={step} className={['step-fade-in', contentScroll ? '' : 'flex-1 min-h-0 flex flex-col overflow-hidden'].filter(Boolean).join(' ')}>
           {step === 1 && (
             dataLoading ? (
               <LoadingPlaceholder label="Loading templates…" />
@@ -332,7 +342,6 @@ export default function Wizard() {
               destination={tripFields.destination}
               datesFrom={tripFields.datesFrom}
               datesTo={tripFields.datesTo}
-              weather={tripFields.weather}
               tripType={tripFields.tripType}
               onChange={changeTripField}
               errors={fieldErrors}
@@ -380,7 +389,7 @@ export default function Wizard() {
         </div>
       </div>
 
-      <div className="flex-none px-4 py-3" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
+      <div className="flex-none px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]" style={{ borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
         <button
           type="button"
           disabled={

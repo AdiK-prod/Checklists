@@ -293,6 +293,22 @@ export default function Settings() {
           )}
         </section>
 
+        {/* Templates */}
+        <section>
+          <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-2">Pack templates</p>
+          <p className="text-12 text-content-secondary mb-3">
+            Rename templates and add or remove checklist items used when you start a new trip.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('/templates', { state: { direction: 'forward' } })}
+            className="w-full bg-white rounded-card py-3 text-14 font-medium text-navy border border-[#e0ddd8]"
+            style={{ boxShadow: '0 0.5px 0 rgba(0,0,0,0.04)' }}
+          >
+            Manage templates
+          </button>
+        </section>
+
         {/* Invite */}
         <section>
           <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-2">Invite partner</p>
