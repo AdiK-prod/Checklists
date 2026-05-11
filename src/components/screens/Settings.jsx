@@ -169,7 +169,7 @@ export default function Settings() {
           type="button"
           onClick={() => navigate('/', { state: { direction: 'back' } })}
           className="flex items-center gap-1 text-13"
-          /* style for blue link per TripPage */
+          style={{ color: '#2d6fb5' }}
         >
           <ArrowLeft size={16} />
         </button>
