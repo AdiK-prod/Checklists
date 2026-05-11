@@ -25,6 +25,19 @@ export function formatTripDates(from, to) {
 }
 
 /**
+ * True if a trip should appear under "past" (completed status, or end date before today in local time).
+ */
+export function isTripPast(trip) {
+  if (!trip) return false
+  if (trip.status === 'completed') return true
+  const to = trip.datesTo
+  if (!to || typeof to !== 'string') return false
+  const now = new Date()
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return to < todayStr
+}
+
+/**
  * Compute overall checklist progress (0–100) across all member lists.
  */
 export function computeProgress(checklists) {

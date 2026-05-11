@@ -3,18 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTrips } from '../../hooks/useTrips'
 import { useHousehold } from '../../hooks/useHousehold'
+import { isTripPast } from '../../lib/utils'
 import TripCard from '../ui/TripCard'
 import { SkeletonCard } from '../ui/Skeleton'
 
 export default function Dashboard() {
   const { household } = useAuth()
   const navigate      = useNavigate()
-  const { trips, loading, error } = useTrips(household?.id)
+  const { trips, loading, error, deleteTrip, refetch } = useTrips(household?.id)
   const { members }               = useHousehold(household?.id)
 
   const tripList = Array.isArray(trips) ? trips : []
-  const upcoming = tripList.filter(t => t.status === 'upcoming')
-  const archived = tripList.filter(t => t.status === 'completed')
+  const upcoming = tripList.filter(t => !isTripPast(t))
+  const past = tripList
+    .filter(t => isTripPast(t))
+    .sort((a, b) => String(b.datesFrom || '').localeCompare(String(a.datesFrom || '')))
+
+  async function handleDeleteTrip(trip) {
+    if (!window.confirm(`Delete “${trip.name}”? This cannot be undone.`)) return
+    const { ok } = await deleteTrip(trip.id)
+    if (!ok) window.alert('Could not delete the trip. Check your connection and try again.')
+  }
 
   return (
     <div className="bg-page">
@@ -26,7 +35,7 @@ export default function Dashboard() {
           <p className="text-12 text-content-secondary mt-0.5">
             {loading
               ? 'Loading…'
-              : `${tripList.length} trip${tripList.length !== 1 ? 's' : ''} · ${upcoming.length} upcoming`}
+              : `${tripList.length} trip${tripList.length !== 1 ? 's' : ''} · ${upcoming.length} upcoming${past.length ? ` · ${past.length} past` : ''}`}
           </p>
         </div>
 
@@ -62,7 +71,7 @@ export default function Dashboard() {
         ) : error ? (
           <RetryError
             message="Couldn't load trips"
-            onRetry={() => window.location.reload()}
+            onRetry={() => refetch()}
           />
         ) : upcoming.length === 0 ? (
           <p className="text-13 text-content-hint py-3">
@@ -74,16 +83,25 @@ export default function Dashboard() {
               key={trip.id}
               trip={trip}
               members={members}
+              isPast={false}
               onClick={() => navigate(`/trips/${trip.id}`, { state: { direction: 'forward' } })}
+              onDelete={() => handleDeleteTrip(trip)}
             />
           ))
         )}
 
-        {!loading && !error && archived.length > 0 && (
+        {!loading && !error && past.length > 0 && (
           <div className="mt-5">
-            <SectionLabel>Archive</SectionLabel>
-            {archived.map(trip => (
-              <TripCard key={trip.id} trip={trip} members={members} />
+            <SectionLabel>Past trips</SectionLabel>
+            {past.map(trip => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                members={members}
+                isPast
+                onClick={() => navigate(`/trips/${trip.id}`, { state: { direction: 'forward' } })}
+                onDelete={() => handleDeleteTrip(trip)}
+              />
             ))}
           </div>
         )}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { normalizeTripRow } from '../lib/transforms'
 
@@ -7,29 +7,43 @@ export function useTrips(householdId) {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
 
-  useEffect(() => {
-    if (!householdId) { setLoading(false); return }
-    let cancelled = false
-
-    async function load() {
-      setLoading(true)
-      setError(null)
-      const { data, error } = await supabase
-        .from('trips')
-        .select('*, trip_travellers(member_id), checklist_items(id, checked)')
-        .eq('household_id', householdId)
-        .order('dates_from', { ascending: true })
-
-      if (cancelled) return
-      if (error) { setError(error); setLoading(false); return }
-      const rows = Array.isArray(data) ? data : []
-      setTrips(rows.map(normalizeTripRow))
+  const load = useCallback(async () => {
+    if (!householdId) {
+      setTrips([])
       setLoading(false)
+      return
     }
+    setLoading(true)
+    setError(null)
+    const { data, error: qErr } = await supabase
+      .from('trips')
+      .select('*, trip_travellers(member_id), checklist_items(id, checked)')
+      .eq('household_id', householdId)
+      .order('dates_from', { ascending: true })
 
-    load()
-    return () => { cancelled = true }
+    if (qErr) {
+      setError(qErr)
+      setLoading(false)
+      return
+    }
+    const rows = Array.isArray(data) ? data : []
+    setTrips(rows.map(normalizeTripRow))
+    setLoading(false)
   }, [householdId])
 
-  return { trips, loading, error }
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const deleteTrip = useCallback(async (tripId) => {
+    const { error: delErr } = await supabase.from('trips').delete().eq('id', tripId)
+    if (delErr) {
+      console.error('delete trip:', delErr)
+      return { ok: false, error: delErr }
+    }
+    setTrips(prev => prev.filter(t => t.id !== tripId))
+    return { ok: true, error: null }
+  }, [])
+
+  return { trips, loading, error, deleteTrip, refetch: load }
 }
