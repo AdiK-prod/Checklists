@@ -69,6 +69,7 @@ export default function Wizard() {
   const [fieldErrors, setFieldErrors]         = useState({})
   const aiMetaRef = useRef({ promptSent: '', responseRaw: '', total: 0 })
   const fetchStartedStepRef = useRef(0)
+  const generateInFlightRef = useRef(false)
   const [step4Ready, setStep4Ready] = useState(false)
 
   useEffect(() => {
@@ -223,7 +224,9 @@ export default function Wizard() {
   async function generateTrip(suggestionsOverride = null) {
     if (!household?.id || !user?.id || !selectedTemplateId) return
     if (selectedTravellers.size === 0) return
+    if (generateInFlightRef.current) return
 
+    generateInFlightRef.current = true
     setGenerating(true)
     const sugg = suggestionsOverride ?? suggestions
     const accepted = sugg.filter(s => s.checked).length
@@ -251,9 +254,17 @@ export default function Wizard() {
       navigate(`/trips/${tripId}`, { state: { direction: 'forward' } })
     } catch (err) {
       console.error(err)
-      alert(err.message || 'Could not create trip')
+      const msg =
+        err?.message ||
+        err?.error_description ||
+        (typeof err?.details === 'string' && err.details) ||
+        (typeof err?.hint === 'string' && err.hint) ||
+        'Could not create trip'
+      alert(msg)
+    } finally {
+      generateInFlightRef.current = false
+      setGenerating(false)
     }
-    setGenerating(false)
   }
 
   const skipAiAndGenerate = async () => {

@@ -68,7 +68,16 @@ function normalizeItem(item) {
 }
 
 export function normalizeTripDetail(row) {
-  const members    = (row.trip_travellers || []).map(t => normalizeMember(t.household_members))
+  const members = (row.trip_travellers || []).map((t) => {
+    const hm = t.household_members
+    if (hm && hm.id) return normalizeMember(hm)
+    return normalizeMember({
+      id:   t.member_id,
+      name: 'Traveller',
+      role: 'parent',
+      age:  null,
+    })
+  })
   const travellers = (row.trip_travellers || []).map(t => t.member_id)
 
   const checklists = {}

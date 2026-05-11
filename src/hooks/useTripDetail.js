@@ -17,22 +17,33 @@ export function useTripDetail(tripId) {
     async function load() {
       setLoading(true)
       setError(null)
-      const { data, error } = await supabase
-        .from('trips')
-        .select(`
+      try {
+        const { data, error: qErr } = await supabase
+          .from('trips')
+          .select(`
           *,
           trip_travellers(member_id, household_members(*)),
           checklist_items(*)
         `)
-        .eq('id', tripId)
-        .single()
+          .eq('id', tripId)
+          .single()
 
-      if (cancelled) return
-      if (error) { setError(error); setLoading(false); return }
-      rawItemsRef.current = data.checklist_items || []
-      templateIdRef.current = data.template_id
-      setTrip(normalizeTripDetail(data))
-      setLoading(false)
+        if (cancelled) return
+        if (qErr) {
+          setError(qErr)
+          return
+        }
+        rawItemsRef.current = data.checklist_items || []
+        templateIdRef.current = data.template_id
+        setTrip(normalizeTripDetail(data))
+      } catch (e) {
+        if (cancelled) return
+        console.error(e)
+        setError({ message: e?.message || 'Could not load trip' })
+        setTrip(null)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
 
     load()

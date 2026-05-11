@@ -1,5 +1,23 @@
 import { supabase } from './supabase'
 
+const CHECKLIST_INSERT_CHUNK = 200
+const AI_LOG_MAX_CHARS = 120_000
+
+async function insertChecklistChunks(rows) {
+  if (!rows.length) return
+  for (let i = 0; i < rows.length; i += CHECKLIST_INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + CHECKLIST_INSERT_CHUNK)
+    const { error } = await supabase.from('checklist_items').insert(chunk)
+    if (error) throw error
+  }
+}
+
+function clipAiLogText(s) {
+  const t = typeof s === 'string' ? s : ''
+  if (t.length <= AI_LOG_MAX_CHARS) return t
+  return `${t.slice(0, AI_LOG_MAX_CHARS)}\n… [truncated]`
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.householdId
@@ -79,8 +97,7 @@ export async function createTripFromWizard(opts) {
   }
 
   if (baseRows.length) {
-    const { error: ciErr } = await supabase.from('checklist_items').insert(baseRows)
-    if (ciErr) throw ciErr
+    await insertChecklistChunks(baseRows)
   }
 
   let sortBase = 10000
@@ -106,15 +123,14 @@ export async function createTripFromWizard(opts) {
   }
 
   if (aiRows.length) {
-    const { error: aiErr } = await supabase.from('checklist_items').insert(aiRows)
-    if (aiErr) throw aiErr
+    await insertChecklistChunks(aiRows)
   }
 
   const { error: logErr } = await supabase.from('ai_suggestions_log').insert({
     trip_id:                tripId,
     household_id:           householdId,
-    prompt_sent:            aiLog.promptSent,
-    response_raw:           aiLog.responseRaw,
+    prompt_sent:            clipAiLogText(aiLog.promptSent || '(none)'),
+    response_raw:           clipAiLogText(aiLog.responseRaw || ''),
     suggestions_accepted:   aiLog.suggestionsAccepted,
     suggestions_total:      aiLog.suggestionsTotal,
   })
