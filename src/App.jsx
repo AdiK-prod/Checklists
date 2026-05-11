@@ -1,112 +1,94 @@
-import { useState, useCallback } from 'react'
-import { INITIAL_TRIPS } from './data/trips'
-import { HOUSEHOLD } from './data/household'
-import Dashboard from './components/screens/Dashboard'
-import Wizard from './components/screens/Wizard'
-import TripPage from './components/screens/TripPage'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
+import Dashboard    from './components/screens/Dashboard'
+import Wizard       from './components/screens/Wizard'
+import TripPage     from './components/screens/TripPage'
+import LoginScreen  from './components/screens/LoginScreen'
 
-// Screen values: 'dashboard' | 'wizard' | 'trip'
-// Module 7 replaces this state machine with react-router-dom routes.
+// ── Loading splash shown while session is being restored ──────
+function AppLoading() {
+  return (
+    <div className="bg-page min-h-screen flex items-center justify-center">
+      <div className="animate-pulse text-13 text-content-secondary">Loading…</div>
+    </div>
+  )
+}
 
-export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('dashboard')
-  const [currentTripId, setCurrentTripId] = useState(null)
-  const [direction, setDirection] = useState(null)   // null | 'forward' | 'back'
-  const [trips, setTrips] = useState(INITIAL_TRIPS)  // mutable demo state
+// ── Redirect unauthenticated users to /login ──────────────────
+function ProtectedRoute({ children }) {
+  const { user, household, loading } = useAuth()
+  const location = useLocation()
 
-  // ── Navigation ──────────────────────────────────────────────
-  const navigate = {
-    toDashboard: () => { setDirection('back');    setCurrentTripId(null); setCurrentScreen('dashboard') },
-    toWizard:    () => { setDirection('forward'); setCurrentScreen('wizard') },
-    toTrip: (id) => { setDirection('forward'); setCurrentTripId(id); setCurrentScreen('trip') },
+  if (loading) return <AppLoading />
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />
+  // New users without a household go to onboarding (Module 8)
+  if (!household && location.pathname !== '/onboarding') {
+    return <Navigate to="/onboarding" replace />
   }
+  return children
+}
 
-  const handleGenerate = () => navigate.toTrip('trip-barcelona')
-
-  // ── Checklist mutations ──────────────────────────────────────
-  const onToggleItem = useCallback((tripId, memberId, itemId) => {
-    setTrips(prev => prev.map(trip => {
-      if (trip.id !== tripId) return trip
-      return {
-        ...trip,
-        checklists: {
-          ...trip.checklists,
-          [memberId]: (trip.checklists[memberId] || []).map(item =>
-            item.id === itemId ? { ...item, checked: !item.checked } : item
-          ),
-        },
-      }
-    }))
-  }, [])
-
-  const onAddItem = useCallback((tripId, memberId, label) => {
-    const newId = `item-${Date.now()}`
-    setTrips(prev => prev.map(trip => {
-      if (trip.id !== tripId) return trip
-      return {
-        ...trip,
-        checklists: {
-          ...trip.checklists,
-          [memberId]: [
-            ...(trip.checklists[memberId] || []),
-            { id: newId, label, category: 'Other', checked: false, isAiSuggested: false, isManuallyAdded: true, savedToTemplate: false, sortOrder: Date.now() },
-          ],
-        },
-      }
-    }))
-    return newId
-  }, [])
-
-  const onSaveToTemplate = useCallback((tripId, memberId, itemId) => {
-    setTrips(prev => prev.map(trip => {
-      if (trip.id !== tripId) return trip
-      return {
-        ...trip,
-        checklists: {
-          ...trip.checklists,
-          [memberId]: (trip.checklists[memberId] || []).map(item =>
-            item.id === itemId ? { ...item, savedToTemplate: true } : item
-          ),
-        },
-      }
-    }))
-  }, [])
-
-  const currentTrip = trips.find(t => t.id === currentTripId)
-
+// ── All routes + animated frame ───────────────────────────────
+function AppRoutes() {
+  const location  = useLocation()
+  const direction = location.state?.direction
   const animClass = direction === 'forward' ? 'screen-forward'
     : direction === 'back' ? 'screen-back'
     : ''
 
   return (
-    // ── Module 6: desktop frame ──────────────────────────────
-    // Mobile:  full-width, standard scroll, page bg #faf8f4
-    // Desktop: centred 430px container, h-screen, border+radius, outer bg #ede9e3
     <div className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
-      <div className="relative w-full max-w-[430px] bg-page font-dm-sans min-h-screen
+      <div className="relative w-full max-w-[430px] bg-page font-dm-sans
                       md:h-screen md:overflow-y-auto md:overflow-x-hidden
                       md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)]">
+        <div key={location.pathname} className={animClass}>
+          <Routes>
+            {/* Public */}
+            <Route path="/login" element={<LoginScreen />} />
 
-        <div key={currentScreen} className={animClass}>
-          {currentScreen === 'dashboard' && (
-            <Dashboard trips={trips} members={HOUSEHOLD.members} navigate={navigate} />
-          )}
-          {currentScreen === 'wizard' && (
-            <Wizard navigate={navigate} onGenerate={handleGenerate} />
-          )}
-          {currentScreen === 'trip' && currentTrip && (
-            <TripPage
-              trip={currentTrip}
-              members={HOUSEHOLD.members}
-              onToggleItem={onToggleItem}
-              onAddItem={onAddItem}
-              onSaveToTemplate={onSaveToTemplate}
-              navigate={navigate}
-            />
-          )}
+            {/* Protected */}
+            <Route path="/" element={
+              <ProtectedRoute><Dashboard /></ProtectedRoute>
+            } />
+            <Route path="/new" element={
+              <ProtectedRoute><Wizard /></ProtectedRoute>
+            } />
+            <Route path="/trips/:id" element={
+              <ProtectedRoute><TripPage /></ProtectedRoute>
+            } />
+
+            {/* Placeholder routes for upcoming modules */}
+            <Route path="/onboarding" element={
+              <ProtectedRoute>
+                <div className="min-h-screen bg-page flex items-center justify-center px-4">
+                  <p className="text-14 text-content-secondary">Onboarding — Module 8</p>
+                </div>
+              </ProtectedRoute>
+            } />
+            <Route path="/settings" element={
+              <ProtectedRoute>
+                <div className="min-h-screen bg-page flex items-center justify-center px-4">
+                  <p className="text-14 text-content-secondary">Settings — Module 11</p>
+                </div>
+              </ProtectedRoute>
+            } />
+
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </div>
-
       </div>
     </div>
+  )
+}
+
+// ── Root component ────────────────────────────────────────────
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }

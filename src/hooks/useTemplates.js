@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { normalizeTripRow } from '../lib/transforms'
 
-export function useTrips(householdId) {
-  const [trips, setTrips]     = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
+export function useTemplates(householdId) {
+  const [templates, setTemplates] = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState(null)
 
   useEffect(() => {
     if (!householdId) { setLoading(false); return }
@@ -15,14 +14,19 @@ export function useTrips(householdId) {
       setLoading(true)
       setError(null)
       const { data, error } = await supabase
-        .from('trips')
-        .select('*, trip_travellers(member_id), checklist_items(id, checked)')
+        .from('templates')
+        .select('*, template_items(id)')
         .eq('household_id', householdId)
-        .order('dates_from', { ascending: true })
+        .order('created_at')
 
       if (cancelled) return
       if (error) { setError(error); setLoading(false); return }
-      setTrips((data || []).map(normalizeTripRow))
+      setTemplates((data || []).map(t => ({
+        id:        t.id,
+        name:      t.name,
+        icon:      t.icon,
+        itemCount: t.template_items?.length ?? 0,
+      })))
       setLoading(false)
     }
 
@@ -30,5 +34,5 @@ export function useTrips(householdId) {
     return () => { cancelled = true }
   }, [householdId])
 
-  return { trips, loading, error }
+  return { templates, loading, error }
 }

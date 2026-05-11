@@ -1,51 +1,106 @@
 import { useState, useEffect, useRef } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, MoreVertical, Plane, Car, Moon,
-  Sparkles, ChevronDown, GripVertical, Check,
-  BookmarkPlus,
+  Sparkles, ChevronDown, GripVertical, Check, BookmarkPlus,
 } from 'lucide-react'
 import Avatar from '../ui/Avatar'
-import { formatTripDates, computeNights, computeProgress, describeTravellers, groupByCategory } from '../../lib/utils'
-import { TEMPLATES } from '../../data/templates'
+import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
+import { formatTripDates, computeNights, groupByCategory } from '../../lib/utils'
+import { useTripDetail } from '../../hooks/useTripDetail'
 
-// DEMO SCAFFOLDING — TEMPLATES import removed in Module 10
+function iconFromTripType(tripType = '') {
+  const lower = String(tripType).toLowerCase()
+  if (lower.includes('flight') || lower.includes('abroad') || lower.includes('fly')) return Plane
+  if (lower.includes('day') || lower.includes('drive') || lower.includes('local')) return Car
+  return Moon
+}
 
-const TEMPLATE_ICONS = { 'template-flight': Plane, 'template-day': Car, 'template-weekend': Moon }
-
-export default function TripPage({ trip, members, onToggleItem, onAddItem, onSaveToTemplate, navigate }) {
+export default function TripPage() {
+  const { id: tripId } = useParams()
+  const navigate       = useNavigate()
+  const { trip, loading, error, toggleItem, addItem, saveToTemplate } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
 
-  const totalProgress = computeProgress(trip.checklists)
-
-  // Animate progress bar from 0 on mount
-  const isInitialMount = useRef(true)
+  const isInitialMount  = useRef(true)
   const [animatedProgress, setAnimatedProgress] = useState(0)
+
+  const totalProgress = trip ? (() => {
+    let total = 0, checked = 0
+    Object.values(trip.checklists || {}).forEach(items => {
+      items.forEach(i => { total++; if (i.checked) checked++ })
+    })
+    return total === 0 ? 0 : Math.round((checked / total) * 100)
+  })() : 0
+
   useEffect(() => {
+    if (!trip) return
     if (isInitialMount.current) {
       isInitialMount.current = false
       const t = setTimeout(() => setAnimatedProgress(totalProgress), 200)
       return () => clearTimeout(t)
     }
     setAnimatedProgress(totalProgress)
-  }, [totalProgress])
+  }, [totalProgress, trip])
 
-  const dates        = formatTripDates(trip.datesFrom, trip.datesTo)
-  const nights       = computeNights(trip.datesFrom, trip.datesTo)
-  const travellerDesc = describeTravellers(trip.travellers, members)
-  const template     = TEMPLATES.find(t => t.id === trip.templateId)
-  const HeroIcon     = TEMPLATE_ICONS[trip.templateId] ?? Plane
+  if (loading) {
+    return (
+      <div className="bg-page">
+        <div className="flex items-center justify-between px-4 pt-4 pb-3">
+          <button
+            onClick={() => navigate('/', { state: { direction: 'back' } })}
+            className="flex items-center gap-1 text-13"
+            style={{ color: '#2d6fb5' }}
+          >
+            <ArrowLeft size={16} /> All trips
+          </button>
+        </div>
+        <div className="px-4 pb-8">
+          <Skeleton className="h-[140px] mb-3" />
+          <SkeletonPersonCard />
+          <SkeletonPersonCard />
+        </div>
+      </div>
+    )
+  }
 
-  const travellersForTrip = members.filter(m => trip.travellers.includes(m.id))
+  if (error || !trip) {
+    return (
+      <div className="bg-page min-h-screen flex flex-col items-center justify-center gap-4 px-4">
+        <p className="text-14 text-content-secondary text-center">Couldn't load this trip.</p>
+        <button
+          onClick={() => navigate('/', { state: { direction: 'back' } })}
+          className="text-13 font-medium"
+          style={{ color: '#2d6fb5' }}
+        >
+          ← Back to trips
+        </button>
+      </div>
+    )
+  }
 
-  const aiCount = (trip.aiSuggestions || []).length
+  const HeroIcon      = iconFromTripType(trip.tripType)
+  const dates         = formatTripDates(trip.datesFrom, trip.datesTo)
+  const nights        = computeNights(trip.datesFrom, trip.datesTo)
+  const aiCount       = (trip.aiSuggestions || []).length
+  const travellers    = trip.members.filter(m => trip.travellers.includes(m.id))
+
+  const travellersDesc = (() => {
+    const parents = trip.members.filter(m => m.role === 'parent')
+    const kids    = trip.members.filter(m => m.role === 'kid')
+    if (trip.members.length === 0) return ''
+    if (kids.length === 0) return `${parents.length} adult${parents.length !== 1 ? 's' : ''}`
+    if (parents.length === 0) return `${kids.length} kid${kids.length !== 1 ? 's' : ''}`
+    return `${parents.length} adult${parents.length !== 1 ? 's' : ''} · ${kids.length} kid${kids.length !== 1 ? 's' : ''}`
+  })()
 
   return (
-    <div className="min-h-screen bg-page">
+    <div className="bg-page">
 
       {/* ── Top bar ──────────────────────────────────────── */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <button
-          onClick={navigate.toDashboard}
+          onClick={() => navigate('/', { state: { direction: 'back' } })}
           className="flex items-center gap-1 text-13"
           style={{ color: '#2d6fb5' }}
         >
@@ -68,13 +123,12 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
           </div>
 
           <p className="text-12 mb-3" style={{ color: '#aec6e8' }}>
-            {[dates, nights > 0 && `${nights} night${nights !== 1 ? 's' : ''}`, template?.name]
+            {[dates, nights > 0 && `${nights} night${nights !== 1 ? 's' : ''}`, trip.tripType]
               .filter(Boolean).join(' · ')}
           </p>
 
-          {/* Pills */}
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {[trip.weather, travellerDesc, trip.tripType].filter(Boolean).map((pill, i) => (
+            {[trip.weather, travellersDesc].filter(Boolean).map((pill, i) => (
               <span
                 key={i}
                 className="text-11 rounded-pill px-[9px] py-[3px]"
@@ -85,12 +139,18 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
             ))}
           </div>
 
-          {/* Progress row */}
           <div className="flex items-center gap-2">
-            <div className="flex-1 h-[5px] rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+            <div
+              className="flex-1 h-[5px] rounded-full overflow-hidden"
+              style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}
+            >
               <div
                 className="h-full rounded-full"
-                style={{ width: `${animatedProgress}%`, backgroundColor: '#2a9d6e', transition: 'width 600ms ease-out' }}
+                style={{
+                  width: `${animatedProgress}%`,
+                  backgroundColor: '#2a9d6e',
+                  transition: 'width 600ms ease-out',
+                }}
               />
             </div>
             <span className="text-12 whitespace-nowrap" style={{ color: '#aee8cc' }}>
@@ -102,7 +162,6 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
         {/* AI suggestions panel */}
         {aiCount > 0 && (
           <div className="bg-white rounded-card mb-3" style={{ border: '0.5px solid #e8d8b0' }}>
-            {/* Collapsed header */}
             <button
               onClick={() => setAiPanelOpen(o => !o)}
               className="w-full flex items-center gap-2 px-4 py-3"
@@ -119,25 +178,31 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
               </span>
               <ChevronDown
                 size={16}
-                style={{ color: '#7a4f0d', flexShrink: 0, transition: 'transform 200ms ease', transform: aiPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                style={{
+                  color: '#7a4f0d',
+                  flexShrink: 0,
+                  transition: 'transform 200ms ease',
+                  transform: aiPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                }}
               />
             </button>
 
-            {/* Collapsible body */}
-            <div style={{ display: 'grid', transition: 'grid-template-rows 250ms ease', gridTemplateRows: aiPanelOpen ? '1fr' : '0fr' }}>
+            <div style={{
+              display: 'grid',
+              transition: 'grid-template-rows 250ms ease',
+              gridTemplateRows: aiPanelOpen ? '1fr' : '0fr',
+            }}>
               <div style={{ overflow: 'hidden' }}>
                 <div className="px-4 pb-3" style={{ borderTop: '0.5px solid #e8d8b0', backgroundColor: '#fffaf3' }}>
                   {trip.aiSuggestions.map((s, i) => {
                     const assignedNames = (s.assignedTo || [])
-                      .map(id => members.find(m => m.id === id)?.name)
+                      .map(id => trip.members.find(m => m.id === id)?.name)
                       .filter(Boolean).join(', ')
                     return (
                       <div key={i} className="pt-2.5">
                         <p className="text-13 font-medium text-content-primary">{s.label}</p>
                         {assignedNames && (
-                          <p className="text-11 text-content-secondary mt-0.5">
-                            Added to: {assignedNames}
-                          </p>
+                          <p className="text-11 text-content-secondary mt-0.5">Added to: {assignedNames}</p>
                         )}
                       </div>
                     )
@@ -149,15 +214,14 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
         )}
 
         {/* Person cards */}
-        {travellersForTrip.map(member => (
+        {travellers.map(member => (
           <PersonCard
             key={member.id}
             member={member}
             items={trip.checklists[member.id] || []}
-            tripId={trip.id}
-            onToggleItem={onToggleItem}
-            onAddItem={onAddItem}
-            onSaveToTemplate={onSaveToTemplate}
+            onToggleItem={toggleItem}
+            onAddItem={addItem}
+            onSaveToTemplate={saveToTemplate}
           />
         ))}
       </div>
@@ -167,9 +231,9 @@ export default function TripPage({ trip, members, onToggleItem, onAddItem, onSav
 
 // ── Person card ───────────────────────────────────────────────
 
-function PersonCard({ member, items, tripId, onToggleItem, onAddItem, onSaveToTemplate }) {
+function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }) {
   const [isExpanded, setIsExpanded] = useState(true)
-  const [addInput, setAddInput] = useState('')
+  const [addInput, setAddInput]     = useState('')
   const [newItemIds, setNewItemIds] = useState(new Set())
 
   const checked = items.filter(i => i.checked).length
@@ -177,26 +241,29 @@ function PersonCard({ member, items, tripId, onToggleItem, onAddItem, onSaveToTe
   const pct     = total === 0 ? 0 : Math.round((checked / total) * 100)
   const groups  = groupByCategory(items)
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const label = addInput.trim()
     if (!label) return
-    const newId = onAddItem(tripId, member.id, label)
-    if (newId) setNewItemIds(prev => new Set([...prev, newId]))
     setAddInput('')
+    const newId = await onAddItem(member.id, label)
+    if (newId) setNewItemIds(prev => new Set([...prev, newId]))
   }
 
   return (
-    <div className="bg-white rounded-card mb-[10px] overflow-hidden" style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}>
-      {/* Header */}
+    <div
+      className="bg-white rounded-card mb-[10px] overflow-hidden"
+      style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+    >
       <button
         onClick={() => setIsExpanded(e => !e)}
         className="w-full flex items-center gap-2.5 px-[14px] py-[13px]"
         style={isExpanded ? { borderBottom: '0.5px solid rgba(0,0,0,0.08)' } : {}}
       >
         <Avatar member={member} size={32} />
-        <span className="flex-1 text-14 font-medium text-content-primary text-left">{member.name}</span>
+        <span className="flex-1 text-14 font-medium text-content-primary text-left">
+          {member.name}
+        </span>
 
-        {/* Mini progress bar + N/N */}
         <div className="flex items-center gap-1.5 mr-1">
           <div className="h-[3px] rounded-full overflow-hidden bg-surface" style={{ width: 44 }}>
             <div className="h-full bg-success rounded-full" style={{ width: `${pct}%` }} />
@@ -211,8 +278,11 @@ function PersonCard({ member, items, tripId, onToggleItem, onAddItem, onSaveToTe
         />
       </button>
 
-      {/* Collapsible body */}
-      <div style={{ display: 'grid', transition: 'grid-template-rows 250ms ease', gridTemplateRows: isExpanded ? '1fr' : '0fr' }}>
+      <div style={{
+        display: 'grid',
+        transition: 'grid-template-rows 250ms ease',
+        gridTemplateRows: isExpanded ? '1fr' : '0fr',
+      }}>
         <div style={{ overflow: 'hidden' }}>
           <div className="px-[14px] pt-2 pb-[13px]">
             {groups.map(({ category, items: catItems }) => (
@@ -226,8 +296,8 @@ function PersonCard({ member, items, tripId, onToggleItem, onAddItem, onSaveToTe
                     item={item}
                     isLast={idx === catItems.length - 1}
                     isNew={newItemIds.has(item.id)}
-                    onToggle={() => onToggleItem(tripId, member.id, item.id)}
-                    onSave={() => onSaveToTemplate(tripId, member.id, item.id)}
+                    onToggle={() => onToggleItem(member.id, item.id)}
+                    onSave={() => onSaveToTemplate(member.id, item.id)}
                   />
                 ))}
               </div>
@@ -266,10 +336,9 @@ function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
       className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
       style={!isLast ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
     >
-      {/* TODO L3: implement drag-to-reorder with react-beautiful-dnd */}
+      {/* TODO L3: drag-to-reorder */}
       <GripVertical size={14} className="flex-shrink-0" style={{ opacity: 0.3, cursor: 'grab' }} />
 
-      {/* Checkbox 18×18 */}
       <div
         onClick={onToggle}
         className={[
@@ -281,12 +350,13 @@ function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
         {item.checked && <Check size={11} color="white" strokeWidth={3} />}
       </div>
 
-      {/* Label */}
-      <span className={['flex-1 text-13 min-w-0 transition-colors', item.checked ? 'line-through text-content-hint' : 'text-content-primary'].join(' ')}>
+      <span className={[
+        'flex-1 text-13 min-w-0 transition-colors',
+        item.checked ? 'line-through text-content-hint' : 'text-content-primary',
+      ].join(' ')}>
         {item.label}
       </span>
 
-      {/* Save to template — manually added items only */}
       {item.isManuallyAdded && !item.savedToTemplate && (
         <button
           onClick={onSave}
@@ -295,7 +365,6 @@ function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
         >
           <BookmarkPlus size={12} />
           Save to template
-          {/* TODO L2: persist saved item back to template_items in Supabase */}
         </button>
       )}
       {item.isManuallyAdded && item.savedToTemplate && (

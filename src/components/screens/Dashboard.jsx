@@ -1,31 +1,36 @@
 import { Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
+import { useTrips } from '../../hooks/useTrips'
+import { useHousehold } from '../../hooks/useHousehold'
 import TripCard from '../ui/TripCard'
+import { SkeletonCard } from '../ui/Skeleton'
 
-// DEMO SCAFFOLDING — trips/members come from App.jsx state (seeded from INITIAL_TRIPS/HOUSEHOLD).
-// Module 7 replaces prop drilling with useTrips / useHousehold hooks.
-
-export default function Dashboard({ trips, members, navigate }) {
+export default function Dashboard() {
+  const { household } = useAuth()
+  const navigate      = useNavigate()
+  const { trips, loading, error } = useTrips(household?.id)
+  const { members }               = useHousehold(household?.id)
 
   const upcoming = trips.filter(t => t.status === 'upcoming')
   const archived = trips.filter(t => t.status === 'completed')
 
   return (
-    <div className="min-h-screen bg-page">
+    <div className="bg-page">
 
       {/* ── Top bar ─────────────────────────────────────── */}
       <div className="sticky top-0 bg-page z-10 px-4 pt-4 pb-3 flex items-start justify-between">
         <div>
-          <h1 className="text-18 font-medium text-content-primary leading-tight">
-            My Trips
-          </h1>
+          <h1 className="text-18 font-medium text-content-primary leading-tight">My Trips</h1>
           <p className="text-12 text-content-secondary mt-0.5">
-            {trips.length} trip{trips.length !== 1 ? 's' : ''} · {upcoming.length} upcoming
+            {loading
+              ? 'Loading…'
+              : `${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${upcoming.length} upcoming`}
           </p>
         </div>
 
-        {/* Plus button — circular, navy */}
         <button
-          onClick={navigate.toWizard}
+          onClick={() => navigate('/new', { state: { direction: 'forward' } })}
           aria-label="New trip"
           className="w-9 h-9 rounded-full bg-navy flex items-center justify-center flex-shrink-0 mt-0.5 hover:bg-navy-hover transition-colors"
         >
@@ -35,11 +40,19 @@ export default function Dashboard({ trips, members, navigate }) {
 
       {/* ── Body ────────────────────────────────────────── */}
       <div className="px-4 pt-1 pb-8">
-
-        {/* Upcoming section */}
         <SectionLabel>Upcoming</SectionLabel>
 
-        {upcoming.length === 0 ? (
+        {loading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : error ? (
+          <RetryError
+            message="Couldn't load trips"
+            onRetry={() => window.location.reload()}
+          />
+        ) : upcoming.length === 0 ? (
           <p className="text-13 text-content-hint py-3">
             No upcoming trips yet — tap + to plan one.
           </p>
@@ -49,35 +62,39 @@ export default function Dashboard({ trips, members, navigate }) {
               key={trip.id}
               trip={trip}
               members={members}
-              onClick={() => navigate.toTrip(trip.id)}
+              onClick={() => navigate(`/trips/${trip.id}`, { state: { direction: 'forward' } })}
             />
           ))
         )}
 
-        {/* Archive section — only rendered when trips exist */}
-        {archived.length > 0 && (
+        {!loading && !error && archived.length > 0 && (
           <div className="mt-5">
             <SectionLabel>Archive</SectionLabel>
             {archived.map(trip => (
-              <TripCard
-                key={trip.id}
-                trip={trip}
-                members={members}
-              />
+              <TripCard key={trip.id} trip={trip} members={members} />
             ))}
           </div>
         )}
-
       </div>
     </div>
   )
 }
 
-// ── Internal: section label ───────────────────────────────────
 function SectionLabel({ children }) {
   return (
     <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-2">
       {children}
     </p>
+  )
+}
+
+function RetryError({ message, onRetry }) {
+  return (
+    <button
+      onClick={onRetry}
+      className="text-13 text-content-secondary py-3"
+    >
+      {message} — tap to retry
+    </button>
   )
 }

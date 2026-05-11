@@ -1,24 +1,27 @@
 import { useState } from 'react'
 import { Plane, Car, Moon } from 'lucide-react'
-import { formatTripDates, computeProgress, describeTravellers } from '../../lib/utils'
+import { formatTripDates, describeTravellers } from '../../lib/utils'
 
-// Icon + colour config by templateId and status
-const TILE_CONFIG = {
-  'template-flight': {
-    Icon: Plane,
-    upcoming:  { bg: '#3d6494', color: '#ffffff' },
-    completed: { bg: '#E6F1FB', color: '#185FA5' },
-  },
-  'template-day': {
-    Icon: Car,
-    upcoming:  { bg: '#E1F5EE', color: '#0F6E56' },
-    completed: { bg: '#E1F5EE', color: '#0F6E56' },
-  },
-  'template-weekend': {
-    Icon: Moon,
-    upcoming:  { bg: '#FAEEDA', color: '#854F0B' },
-    completed: { bg: '#FAEEDA', color: '#854F0B' },
-  },
+// Color palette per trip, derived from id hash for consistency
+const TILE_PALETTES = [
+  { upcoming: { bg: '#3d6494', color: '#ffffff' }, completed: { bg: '#E6F1FB', color: '#185FA5' } },
+  { upcoming: { bg: '#2a9d6e', color: '#ffffff' }, completed: { bg: '#E1F5EE', color: '#0F6E56' } },
+  { upcoming: { bg: '#c47d1a', color: '#ffffff' }, completed: { bg: '#FAEEDA', color: '#854F0B' } },
+  { upcoming: { bg: '#9b6b9b', color: '#ffffff' }, completed: { bg: '#F3E8F3', color: '#6B2F6B' } },
+]
+
+function paletteFromId(id = '') {
+  let h = 0
+  for (const c of String(id)) h = ((h << 5) - h + c.charCodeAt(0)) | 0
+  return TILE_PALETTES[Math.abs(h) % TILE_PALETTES.length]
+}
+
+function iconFromTripType(tripType = '') {
+  const lower = String(tripType).toLowerCase()
+  if (lower.includes('flight') || lower.includes('abroad') || lower.includes('fly')) return Plane
+  if (lower.includes('day') || lower.includes('drive') || lower.includes('local')) return Car
+  if (lower.includes('weekend') || lower.includes('night') || lower.includes('away') || lower.includes('stay')) return Moon
+  return Plane
 }
 
 export default function TripCard({ trip, members, onClick }) {
@@ -27,18 +30,16 @@ export default function TripCard({ trip, members, onClick }) {
   const isUpcoming  = trip.status === 'upcoming'
   const isClickable = isUpcoming
 
-  const progress     = computeProgress(trip.checklists)
-  const dates        = formatTripDates(trip.datesFrom, trip.datesTo)
+  const progress      = trip.total > 0 ? Math.round((trip.done / trip.total) * 100) : 0
+  const dates         = formatTripDates(trip.datesFrom, trip.datesTo)
   const travellerDesc = describeTravellers(trip.travellers, members)
-  const meta         = [dates, travellerDesc].filter(Boolean).join(' · ')
+  const meta          = [dates, travellerDesc].filter(Boolean).join(' · ')
 
-  const config   = TILE_CONFIG[trip.templateId] ?? TILE_CONFIG['template-flight']
-  const tileStyle = config[trip.status] ?? config.upcoming
-  const { Icon } = config
+  const palette   = paletteFromId(trip.id)
+  const tileStyle = palette[trip.status] ?? palette.upcoming
+  const Icon      = iconFromTripType(trip.tripType)
 
-  const borderColor = hovered && isClickable
-    ? 'rgba(0,0,0,0.16)'
-    : 'rgba(0,0,0,0.08)'
+  const borderColor = hovered && isClickable ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.08)'
 
   return (
     <div
@@ -51,7 +52,7 @@ export default function TripCard({ trip, members, onClick }) {
         isClickable ? 'cursor-pointer' : 'cursor-default',
       ].join(' ')}
     >
-      {/* Left: icon tile 38×38, radius 8px */}
+      {/* Icon tile 38×38 */}
       <div
         style={{ backgroundColor: tileStyle.bg, color: tileStyle.color, width: 38, height: 38, flexShrink: 0 }}
         className="rounded-input flex items-center justify-center"
@@ -59,17 +60,14 @@ export default function TripCard({ trip, members, onClick }) {
         <Icon size={18} />
       </div>
 
-      {/* Centre: name + meta + progress bar */}
+      {/* Name + meta + progress */}
       <div className="flex-1 min-w-0">
         <p className="text-14 font-medium text-content-primary truncate leading-snug">
           {trip.name}
         </p>
         {meta && (
-          <p className="text-12 text-content-secondary mt-0.5 truncate">
-            {meta}
-          </p>
+          <p className="text-12 text-content-secondary mt-0.5 truncate">{meta}</p>
         )}
-        {/* Mini progress bar — upcoming only, 48px × 4px */}
         {isUpcoming && (
           <div className="mt-1.5 h-1 bg-surface rounded-full overflow-hidden" style={{ width: 48 }}>
             <div
@@ -80,19 +78,13 @@ export default function TripCard({ trip, members, onClick }) {
         )}
       </div>
 
-      {/* Right: status badge */}
+      {/* Status badge */}
       {isUpcoming ? (
-        <span
-          className="flex-shrink-0 px-2 py-0.5 bg-amber-light text-amber-dark rounded-pill text-11 font-medium"
-          style={{ whiteSpace: 'nowrap' }}
-        >
+        <span className="flex-shrink-0 px-2 py-0.5 bg-amber-light text-amber-dark rounded-pill text-11 font-medium whitespace-nowrap">
           {progress}%
         </span>
       ) : (
-        <span
-          className="flex-shrink-0 px-2 py-0.5 bg-surface text-content-secondary rounded-pill text-11 font-medium"
-          style={{ whiteSpace: 'nowrap' }}
-        >
+        <span className="flex-shrink-0 px-2 py-0.5 bg-surface text-content-secondary rounded-pill text-11 font-medium whitespace-nowrap">
           Done
         </span>
       )}
