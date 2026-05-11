@@ -22,7 +22,8 @@ export function useTrips(householdId) {
 
       if (cancelled) return
       if (error) { setError(error); setLoading(false); return }
-      setTrips((data || []).map(normalizeTripRow))
+      const rows = Array.isArray(data) ? data : []
+      setTrips(rows.map(normalizeTripRow))
       setLoading(false)
     }
 

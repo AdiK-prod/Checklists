@@ -84,7 +84,7 @@ export default function Wizard() {
     }
   }, [members, selectedTravellers.size])
 
-  const travellerMembers = members.filter(m => selectedTravellers.has(m.id))
+  const travellerMembers = (Array.isArray(members) ? members : []).filter(m => selectedTravellers.has(m.id))
 
   const loadStep4Ai = useCallback(async () => {
     if (!selectedTemplateId || travellerMembers.length === 0) return
@@ -198,17 +198,20 @@ export default function Wizard() {
   const toggleAssign = (suggId, memberId) =>
     setSuggestions(prev => prev.map(s => {
       if (s.id !== suggId) return s
-      const next = s.assignedTo.includes(memberId)
-        ? s.assignedTo.filter(x => x !== memberId)
-        : [...s.assignedTo, memberId]
+      const at = Array.isArray(s.assignedTo) ? s.assignedTo : []
+      const next = at.includes(memberId)
+        ? at.filter(x => x !== memberId)
+        : [...at, memberId]
       return { ...s, assignedTo: next }
     }))
 
   const toggleAll = (suggId) =>
     setSuggestions(prev => prev.map(s => {
       if (s.id !== suggId) return s
-      const allSelected = s.memberIds.every(id => s.assignedTo.includes(id))
-      return { ...s, assignedTo: allSelected ? [] : [...s.memberIds] }
+      const at = Array.isArray(s.assignedTo) ? s.assignedTo : []
+      const mids = Array.isArray(s.memberIds) ? s.memberIds : []
+      const allSelected = mids.every(id => at.includes(id))
+      return { ...s, assignedTo: allSelected ? [] : [...mids] }
     }))
 
   const changeTripField = (key, value) => {

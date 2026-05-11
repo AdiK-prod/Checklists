@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { normalizeTripDetail } from '../lib/transforms'
+import { normalizeTripDetail, asArray } from '../lib/transforms'
 
 export function useTripDetail(tripId) {
   const [trip, setTrip]       = useState(null)
@@ -33,7 +33,7 @@ export function useTripDetail(tripId) {
           setError(qErr)
           return
         }
-        rawItemsRef.current = data.checklist_items || []
+        rawItemsRef.current = asArray(data.checklist_items)
         templateIdRef.current = data.template_id
         setTrip(normalizeTripDetail(data))
       } catch (e) {

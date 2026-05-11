@@ -1,3 +1,5 @@
+import { asArray } from './transforms'
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 const CATEGORY_ORDER = ['Documents','Clothing','Essentials','Toiletries','Entertainment','Medications','Other']
@@ -68,7 +70,8 @@ export function groupByCategory(items) {
  * e.g. "2 adults · 2 kids" or "3 adults"
  */
 export function describeTravellers(travellerIds, members) {
-  const travellers = (members || []).filter(m => (travellerIds || []).includes(m.id))
+  const ids = asArray(travellerIds)
+  const travellers = (members || []).filter(m => ids.includes(m.id))
   const parents = travellers.filter(m => m.role === 'parent')
   const kids    = travellers.filter(m => m.role === 'kid')
 

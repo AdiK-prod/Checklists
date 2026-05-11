@@ -1,6 +1,12 @@
 // Data normalisation — converts snake_case Supabase rows to camelCase UI shapes.
 // All DB access goes through hooks in /src/hooks/; transforms live here.
 
+/** PostgREST usually returns arrays for embeds; coerce single objects so .filter/.map never break. */
+export function asArray(v) {
+  if (v == null) return []
+  return Array.isArray(v) ? v : [v]
+}
+
 const AVATAR_PALETTE = [
   { bg: '#E6F1FB', text: '#185FA5' },
   { bg: '#E1F5EE', text: '#0F6E56' },
@@ -35,9 +41,11 @@ export function normalizeMember(row) {
 }
 
 export function normalizeTripRow(row) {
-  const total      = row.checklist_items?.length ?? 0
-  const done       = row.checklist_items?.filter(i => i.checked).length ?? 0
-  const travellers = (row.trip_travellers || []).map(t => t.member_id)
+  const checklistItems = asArray(row.checklist_items)
+  const tripTravellers = asArray(row.trip_travellers)
+  const total      = checklistItems.length
+  const done       = checklistItems.filter(i => i.checked).length
+  const travellers = tripTravellers.map(t => t.member_id)
 
   return {
     id:          row.id,
@@ -68,9 +76,14 @@ function normalizeItem(item) {
 }
 
 export function normalizeTripDetail(row) {
-  const members = (row.trip_travellers || []).map((t) => {
+  const tripTravellers = asArray(row.trip_travellers)
+  const checklistItems = asArray(row.checklist_items)
+
+  const members = tripTravellers.map((t) => {
     const hm = t.household_members
-    if (hm && hm.id) return normalizeMember(hm)
+    if (hm && !Array.isArray(hm) && hm.id) return normalizeMember(hm)
+    const hmRow = Array.isArray(hm) ? hm[0] : hm
+    if (hmRow?.id) return normalizeMember(hmRow)
     return normalizeMember({
       id:   t.member_id,
       name: 'Traveller',
@@ -78,10 +91,10 @@ export function normalizeTripDetail(row) {
       age:  null,
     })
   })
-  const travellers = (row.trip_travellers || []).map(t => t.member_id)
+  const travellers = tripTravellers.map(t => t.member_id)
 
   const checklists = {}
-  ;(row.checklist_items || []).forEach(item => {
+  checklistItems.forEach(item => {
     if (!checklists[item.member_id]) checklists[item.member_id] = []
     checklists[item.member_id].push(normalizeItem(item))
   })
@@ -92,14 +105,14 @@ export function normalizeTripDetail(row) {
   // Build AI suggestions: one entry per unique label across all members
   const seen = new Set()
   const aiSuggestions = []
-  ;(row.checklist_items || [])
+  checklistItems
     .filter(i => i.is_ai_suggested)
     .forEach(item => {
       if (!seen.has(item.label)) {
         seen.add(item.label)
         aiSuggestions.push({
           label:      item.label,
-          assignedTo: (row.checklist_items || [])
+          assignedTo: checklistItems
             .filter(i => i.label === item.label && i.is_ai_suggested)
             .map(i => i.member_id),
         })

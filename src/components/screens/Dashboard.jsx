@@ -12,8 +12,9 @@ export default function Dashboard() {
   const { trips, loading, error } = useTrips(household?.id)
   const { members }               = useHousehold(household?.id)
 
-  const upcoming = trips.filter(t => t.status === 'upcoming')
-  const archived = trips.filter(t => t.status === 'completed')
+  const tripList = Array.isArray(trips) ? trips : []
+  const upcoming = tripList.filter(t => t.status === 'upcoming')
+  const archived = tripList.filter(t => t.status === 'completed')
 
   return (
     <div className="bg-page">
@@ -25,7 +26,7 @@ export default function Dashboard() {
           <p className="text-12 text-content-secondary mt-0.5">
             {loading
               ? 'Loading…'
-              : `${trips.length} trip${trips.length !== 1 ? 's' : ''} · ${upcoming.length} upcoming`}
+              : `${tripList.length} trip${tripList.length !== 1 ? 's' : ''} · ${upcoming.length} upcoming`}
           </p>
         </div>
 

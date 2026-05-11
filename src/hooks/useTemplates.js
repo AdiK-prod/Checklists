@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { asArray } from '../lib/transforms'
 
 export function useTemplates(householdId) {
   const [templates, setTemplates] = useState([])
@@ -21,11 +22,12 @@ export function useTemplates(householdId) {
 
       if (cancelled) return
       if (error) { setError(error); setLoading(false); return }
-      setTemplates((data || []).map(t => ({
+      const rows = Array.isArray(data) ? data : []
+      setTemplates(rows.map(t => ({
         id:        t.id,
         name:      t.name,
         icon:      t.icon,
-        itemCount: t.template_items?.length ?? 0,
+        itemCount: asArray(t.template_items).length,
       })))
       setLoading(false)
     }

@@ -27,8 +27,9 @@ export default function TripPage() {
 
   const totalProgress = trip ? (() => {
     let total = 0, checked = 0
-    Object.values(trip.checklists || {}).forEach(items => {
-      items.forEach(i => { total++; if (i.checked) checked++ })
+    Object.values(trip.checklists || {}).forEach(raw => {
+      const arr = Array.isArray(raw) ? raw : []
+      arr.forEach(i => { total++; if (i.checked) checked++ })
     })
     return total === 0 ? 0 : Math.round((checked / total) * 100)
   })() : 0
@@ -83,12 +84,14 @@ export default function TripPage() {
   const dates         = formatTripDates(trip.datesFrom, trip.datesTo)
   const nights        = computeNights(trip.datesFrom, trip.datesTo)
   const aiCount       = (trip.aiSuggestions || []).length
-  const travellers    = trip.members.filter(m => trip.travellers.includes(m.id))
+  const membersList   = Array.isArray(trip.members) ? trip.members : []
+  const travellerIds  = Array.isArray(trip.travellers) ? trip.travellers : []
+  const travellers    = membersList.filter(m => travellerIds.includes(m.id))
 
   const travellersDesc = (() => {
-    const parents = trip.members.filter(m => m.role === 'parent')
-    const kids    = trip.members.filter(m => m.role === 'kid')
-    if (trip.members.length === 0) return ''
+    const parents = membersList.filter(m => m.role === 'parent')
+    const kids    = membersList.filter(m => m.role === 'kid')
+    if (membersList.length === 0) return ''
     if (kids.length === 0) return `${parents.length} adult${parents.length !== 1 ? 's' : ''}`
     if (parents.length === 0) return `${kids.length} kid${kids.length !== 1 ? 's' : ''}`
     return `${parents.length} adult${parents.length !== 1 ? 's' : ''} · ${kids.length} kid${kids.length !== 1 ? 's' : ''}`
@@ -236,10 +239,11 @@ function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }
   const [addInput, setAddInput]     = useState('')
   const [newItemIds, setNewItemIds] = useState(new Set())
 
-  const checked = items.filter(i => i.checked).length
-  const total   = items.length
+  const itemList = Array.isArray(items) ? items : []
+  const checked = itemList.filter(i => i.checked).length
+  const total   = itemList.length
   const pct     = total === 0 ? 0 : Math.round((checked / total) * 100)
-  const groups  = groupByCategory(items)
+  const groups  = groupByCategory(itemList)
 
   const handleAdd = async () => {
     const label = addInput.trim()
