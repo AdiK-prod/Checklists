@@ -465,6 +465,11 @@ function ChecklistItemRow({
   onDragOver,
   onDrop,
 }) {
+  // Blueprint / prototype (Module 4): only items created with "Add item" (isManuallyAdded)
+  // show BookmarkPlus + "Save to template". Not template copies, not AI rows.
+  const showSaveToTemplate =
+    canSaveToTemplate && !item.savedToTemplate && item.isManuallyAdded
+
   return (
     <div
       className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
@@ -500,7 +505,7 @@ function ChecklistItemRow({
         {item.label}
       </span>
 
-      {canSaveToTemplate && !item.savedToTemplate && (
+      {showSaveToTemplate && (
         <button
           type="button"
           onClick={(e) => {
