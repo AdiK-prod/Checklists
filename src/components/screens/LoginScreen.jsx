@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { Plane, Mail } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
+import { authDebug } from '../../lib/authDebugLog'
 
 export default function LoginScreen() {
   const { user, household, loading: authLoading, householdLoading, signIn, signUp, signInWithGoogle, resendSignupEmail } = useAuth()
@@ -19,6 +20,26 @@ export default function LoginScreen() {
   const [pendingVerifyEmail, setPendingVerifyEmail] = useState(null)
   const [resendStatus, setResendStatus]       = useState(null)
   const [resendLoading, setResendLoading]     = useState(false)
+  const loginUiLogKey = useRef('')
+
+  useEffect(() => {
+    let phase = 'form'
+    if (authLoading && !user) phase = 'boot-loader'
+    else if (user && (authLoading || householdLoading)) phase = 'post-auth-loader'
+    else if (user) phase = 'redirect-pending'
+    const key = `${phase}|${!!user}|${authLoading}|${householdLoading}|${household?.id ?? '-'}`
+    if (key !== loginUiLogKey.current) {
+      loginUiLogKey.current = key
+      authDebug('LoginScreen', {
+        phase,
+        authLoading,
+        householdLoading,
+        hasUser: !!user,
+        householdId: household?.id ? `${household.id.slice(0, 8)}…` : null,
+        path: location.pathname,
+      })
+    }
+  }, [user, authLoading, householdLoading, household?.id, location.pathname])
 
   useEffect(() => {
     if (!user) return
