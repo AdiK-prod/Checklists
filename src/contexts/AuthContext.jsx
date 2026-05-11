@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 
+const HOUSEHOLD_FETCH_TIMEOUT_MS = 15_000
+
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
@@ -10,24 +12,83 @@ export function AuthProvider({ children }) {
   const [loading, setLoading]     = useState(true)
 
   const fetchHousehold = useCallback(async (userId) => {
-    const { data } = await supabase
-      .from('household_users')
-      .select('household_id, households(id, name)')
-      .eq('user_id', userId)
-      .maybeSingle()
-    setHousehold(data?.households ?? null)
+    if (!userId) {
+      setHousehold(null)
+      return
+    }
+    try {
+      const { data, error } = await supabase
+        .from('household_users')
+        .select('household_id, households(id, name)')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (error) {
+        console.error('fetchHousehold:', error)
+        setHousehold(null)
+        return
+      }
+      setHousehold(data?.households ?? null)
+    } catch (e) {
+      console.error('fetchHousehold:', e)
+      setHousehold(null)
+    }
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) await fetchHousehold(session.user.id)
-      setLoading(false)
-    })
+    let cancelled = false
+
+    /** Must always end with loading false — never leave the app on a blank screen. */
+    async function initSession() {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (cancelled) return
+
+        if (error) {
+          console.error('getSession:', error)
+          setSession(null)
+          setUser(null)
+          setHousehold(null)
+          return
+        }
+
+        const session = data?.session ?? null
+        setSession(session)
+        setUser(session?.user ?? null)
+
+        if (session?.user) {
+          try {
+            await Promise.race([
+              fetchHousehold(session.user.id),
+              new Promise((_, reject) => {
+                setTimeout(
+                  () => reject(new Error('Household lookup timed out')),
+                  HOUSEHOLD_FETCH_TIMEOUT_MS
+                )
+              }),
+            ])
+          } catch (e) {
+            console.warn(e)
+          }
+        } else {
+          setHousehold(null)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.error('Auth init:', e)
+          setSession(null)
+          setUser(null)
+          setHousehold(null)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    initSession()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (cancelled) return
         setSession(session)
         setUser(session?.user ?? null)
         if (session?.user) {
@@ -37,7 +98,10 @@ export function AuthProvider({ children }) {
         }
       }
     )
-    return () => subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [fetchHousehold])
 
   async function signIn(email, password) {
