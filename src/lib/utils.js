@@ -1,5 +1,7 @@
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+const CATEGORY_ORDER = ['Documents','Clothing','Essentials','Toiletries','Entertainment','Medications','Other']
+
 /**
  * Format a date range into a compact label.
  * Same month:  "Jul 14–21"
@@ -33,6 +35,32 @@ export function computeProgress(checklists) {
     })
   })
   return total === 0 ? 0 : Math.round((checked / total) * 100)
+}
+
+/**
+ * Compute the number of nights between two date strings.
+ */
+export function computeNights(from, to) {
+  if (!from || !to) return 0
+  const d1 = new Date(from + 'T00:00:00')
+  const d2 = new Date(to + 'T00:00:00')
+  return Math.round((d2 - d1) / (1000 * 60 * 60 * 24))
+}
+
+/**
+ * Group checklist items by category, in the canonical order.
+ * Returns: [{ category, items }]
+ */
+export function groupByCategory(items) {
+  const map = {}
+  ;(items || []).forEach(item => {
+    const cat = item.category || 'Other'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(item)
+  })
+  return CATEGORY_ORDER
+    .filter(cat => map[cat])
+    .map(cat => ({ category: cat, items: map[cat].sort((a, b) => a.sortOrder - b.sortOrder) }))
 }
 
 /**
