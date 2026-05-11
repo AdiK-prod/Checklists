@@ -45,7 +45,22 @@ export function AuthProvider({ children }) {
   }
 
   async function signUp(email, password) {
-    return supabase.auth.signUp({ email, password })
+    return supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        /** Where the email confirmation link should send the user after they click it */
+        emailRedirectTo: `${window.location.origin}/`,
+      },
+    })
+  }
+
+  async function resendSignupEmail(email) {
+    return supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/` },
+    })
   }
 
   async function signOut() {
@@ -64,7 +79,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, session, household, loading,
-      signIn, signUp, signOut, signInWithGoogle,
+      signIn, signUp, signOut, signInWithGoogle, resendSignupEmail,
       refreshHousehold: fetchHousehold,
     }}>
       {children}

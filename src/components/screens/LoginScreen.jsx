@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Plane } from 'lucide-react'
+import { Plane, Mail } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 
 export default function LoginScreen() {
-  const { user, household, signIn, signUp, signInWithGoogle } = useAuth()
+  const { user, household, signIn, signUp, signInWithGoogle, resendSignupEmail } = useAuth()
 
   const [tab, setTab]                         = useState('signin')
   const [email, setEmail]                     = useState('')
@@ -14,6 +14,10 @@ export default function LoginScreen() {
   const [oauthLoading, setOauthLoading]       = useState(false)
   const [fieldErrors, setFieldErrors]         = useState({})
   const [authError, setAuthError]             = useState('')
+  /** Set when sign-up succeeded but email must be confirmed (no session yet). */
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState(null)
+  const [resendStatus, setResendStatus]       = useState(null)
+  const [resendLoading, setResendLoading]     = useState(false)
 
   if (user) return <Navigate to={household ? '/' : '/onboarding'} replace />
 
@@ -24,31 +28,59 @@ export default function LoginScreen() {
     if (!password) errs.password = 'Required'
     else if (password.length < 6) errs.password = 'Min 6 chars'
     if (tab === 'signup' && password !== confirmPassword) {
-      errs.confirmPassword = "No match"
+      errs.confirmPassword = 'No match'
     }
     return errs
+  }
+
+  function mapSignInError(message) {
+    const m = (message || '').toLowerCase()
+    if (m.includes('email not confirmed') || m.includes('not confirmed')) {
+      return 'Confirm your email first — we sent you a link when you signed up. Check your inbox and spam folder.'
+    }
+    return message
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setAuthError('')
+    setResendStatus(null)
     const errs = validate()
     setFieldErrors(errs)
     if (Object.keys(errs).length > 0) return
 
     setLoading(true)
-    const { error } = tab === 'signin'
-      ? await signIn(email, password)
-      : await signUp(email, password)
-    setLoading(false)
+    if (tab === 'signin') {
+      const { error } = await signIn(email, password)
+      setLoading(false)
+      if (error) setAuthError(mapSignInError(error.message))
+      return
+    }
 
-    if (error) setAuthError(error.message)
+    const { data, error } = await signUp(email, password)
+    setLoading(false)
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    // Email confirmation required → Supabase returns user but no session
+    if (data?.user && !data?.session) {
+      setPendingVerifyEmail(email.trim())
+      setPassword('')
+      setConfirmPassword('')
+      return
+    }
+
+    // Immediate session (confirm email disabled) → AuthContext updates → Navigate runs
   }
 
   function switchTab(t) {
     setTab(t)
     setFieldErrors({})
     setAuthError('')
+    setPendingVerifyEmail(null)
+    setResendStatus(null)
   }
 
   async function handleGoogle() {
@@ -57,6 +89,76 @@ export default function LoginScreen() {
     const { error } = await signInWithGoogle()
     setOauthLoading(false)
     if (error) setAuthError(error.message)
+  }
+
+  async function handleResend() {
+    if (!pendingVerifyEmail) return
+    setResendLoading(true)
+    setResendStatus(null)
+    const { error } = await resendSignupEmail(pendingVerifyEmail)
+    setResendLoading(false)
+    if (error) setResendStatus({ ok: false, text: error.message })
+    else setResendStatus({ ok: true, text: 'Another email is on its way.' })
+  }
+
+  if (pendingVerifyEmail) {
+    return (
+      <div className="flex-1 min-h-0 flex flex-col justify-center items-center px-4 py-3 overflow-y-auto">
+        <div
+          className="w-full max-w-[320px] bg-white rounded-card p-4 shrink-0"
+          style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+        >
+          <div className="flex justify-center mb-3">
+            <div
+              className="w-11 h-11 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: '#E6F1FB' }}
+            >
+              <Mail size={22} style={{ color: '#185FA5' }} aria-hidden />
+            </div>
+          </div>
+          <h2 className="text-15 font-medium text-content-primary text-center mb-2">
+            Check your email
+          </h2>
+          <p className="text-12 text-content-secondary text-center leading-snug mb-1">
+            We sent a confirmation link to
+          </p>
+          <p className="text-13 font-medium text-content-primary text-center break-all mb-3">
+            {pendingVerifyEmail}
+          </p>
+          <p className="text-11 text-content-hint text-center leading-snug mb-4">
+            Open the link in that message to finish creating your account. If you don&apos;t see it, check spam or promotions.
+          </p>
+
+          {resendStatus && (
+            <p
+              className="text-11 text-center rounded-input px-2 py-1.5 mb-3"
+              style={{
+                color: resendStatus.ok ? '#0F6E56' : '#c03434',
+                backgroundColor: resendStatus.ok ? '#E1F5EE' : '#fff0f0',
+              }}
+            >
+              {resendStatus.text}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resendLoading}
+            className="w-full rounded-button py-2 text-13 font-medium text-white bg-navy hover:bg-navy-hover transition-colors mb-2 disabled:opacity-60"
+          >
+            {resendLoading ? 'Sending…' : 'Resend confirmation email'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPendingVerifyEmail(null); setResendStatus(null) }}
+            className="w-full py-2 text-12 text-content-secondary"
+          >
+            Use a different email
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

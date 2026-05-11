@@ -3,7 +3,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Dashboard    from './components/screens/Dashboard'
 import Wizard       from './components/screens/Wizard'
 import TripPage     from './components/screens/TripPage'
-import LoginScreen  from './components/screens/LoginScreen'
+import LoginScreen           from './components/screens/LoginScreen'
+import OnboardingPlaceholder from './components/screens/OnboardingPlaceholder'
 
 // ── Loading splash shown while session is being restored ──────
 function AppLoading() {
@@ -67,9 +68,7 @@ function AppRoutes() {
             {/* Placeholder routes for upcoming modules */}
             <Route path="/onboarding" element={
               <ProtectedRoute>
-                <div className="min-h-screen bg-page flex items-center justify-center px-4">
-                  <p className="text-14 text-content-secondary">Onboarding — Module 8</p>
-                </div>
+                <OnboardingPlaceholder />
               </ProtectedRoute>
             } />
             <Route path="/settings" element={
