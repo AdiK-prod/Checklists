@@ -2,8 +2,6 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { supabase } from '../lib/supabase'
 
 const HOUSEHOLD_FETCH_TIMEOUT_MS = 15_000
-/** If INITIAL_SESSION never fires (e.g. older clients), fall back to getSession. */
-const INIT_FALLBACK_MS = 2_500
 
 const AuthContext = createContext(null)
 
@@ -56,37 +54,24 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false
-    const bootstrapDoneRef = { current: false }
 
-    async function applySession(session, { raceHousehold } = { raceHousehold: false }) {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        try {
-          const p = fetchHousehold(session.user.id)
-          if (raceHousehold) await withHouseholdTimeout(p)
-          else await p
-        } catch (e) {
-          console.warn(e)
-        }
-      } else {
-        setHousehold(null)
-      }
-    }
-
-    async function fallbackBootstrap() {
-      if (cancelled || bootstrapDoneRef.current) return
-      bootstrapDoneRef.current = true
+    /**
+     * Single ordered boot: session first, then household — avoids racing two “sources of truth”
+     * (e.g. INITIAL_SESSION vs getSession) that each flip loading / user / household at different times.
+     */
+    async function bootstrap() {
       try {
         const { data, error } = await supabase.auth.getSession()
         if (cancelled) return
+
         if (error) {
-          console.error('getSession (fallback):', error)
+          console.error('getSession:', error)
           setSession(null)
           setUser(null)
           setHousehold(null)
           return
         }
+
         let sess = data?.session ?? null
         if (!sess) {
           try {
@@ -94,10 +79,21 @@ export function AuthProvider({ children }) {
             if (!cancelled && !refErr) sess = refData?.session ?? null
           } catch (_) { /* ignore */ }
         }
-        await applySession(sess, { raceHousehold: true })
+
+        setSession(sess)
+        setUser(sess?.user ?? null)
+        if (sess?.user) {
+          try {
+            await withHouseholdTimeout(fetchHousehold(sess.user.id))
+          } catch (e) {
+            console.warn(e)
+          }
+        } else {
+          setHousehold(null)
+        }
       } catch (e) {
         if (!cancelled) {
-          console.error('Auth fallback init:', e)
+          console.error('Auth bootstrap:', e)
           setSession(null)
           setUser(null)
           setHousehold(null)
@@ -107,31 +103,12 @@ export function AuthProvider({ children }) {
       }
     }
 
-    const fallbackTimer = setTimeout(fallbackBootstrap, INIT_FALLBACK_MS)
+    bootstrap()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (cancelled) return
-
-      if (event === 'INITIAL_SESSION') {
-        clearTimeout(fallbackTimer)
-        if (!bootstrapDoneRef.current) {
-          bootstrapDoneRef.current = true
-          try {
-            await applySession(session ?? null, { raceHousehold: true })
-          } catch (e) {
-            console.error('INITIAL_SESSION:', e)
-          } finally {
-            if (!cancelled) setLoading(false)
-          }
-        } else {
-          try {
-            await applySession(session ?? null, { raceHousehold: false })
-          } catch (e) {
-            console.error('INITIAL_SESSION (late):', e)
-          }
-        }
-        return
-      }
+      // First load is handled only by bootstrap() so we don’t run two parallel inits.
+      if (event === 'INITIAL_SESSION') return
 
       setSession(session)
       setUser(session?.user ?? null)
@@ -144,7 +121,6 @@ export function AuthProvider({ children }) {
 
     return () => {
       cancelled = true
-      clearTimeout(fallbackTimer)
       subscription.unsubscribe()
     }
   }, [fetchHousehold])
