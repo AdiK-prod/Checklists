@@ -11,3 +11,60 @@ body {
   background-color: #faf8f4;
   font-family: 'DM Sans', sans-serif;
 }
+
+/* ── Module 5: Screen transitions ───────────────────────── */
+/* Forward (dashboard→wizard→trip): slide in from right */
+.screen-forward {
+  animation: slideInRight 200ms ease-out;
+}
+/* Back (trip/wizard→dashboard): slide in from left */
+.screen-back {
+  animation: slideInLeft 200ms ease-out;
+}
+@keyframes slideInRight {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-40px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
+/* ── Module 5: Wizard step fade ─────────────────────────── */
+.step-fade-in {
+  animation: fadeIn 150ms ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Module 5: Add item row appear ──────────────────────── */
+.item-appear {
+  animation: itemAppear 150ms ease-out;
+}
+@keyframes itemAppear {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* ── Module 5: Amber CTA pulse (once on first render) ───── */
+.cta-pulse {
+  animation: ctaPulse 400ms ease-in-out 1;
+}
+@keyframes ctaPulse {
+  0%   { transform: scale(1);    }
+  50%  { transform: scale(1.03); }
+  100% { transform: scale(1);    }
+}
+
+/* ── Module 5: Checkbox pop ─────────────────────────────── */
+/* Applied via JS on toggle; removed after animation */
+.checkbox-pop {
+  animation: checkboxPop 100ms ease-out;
+}
+@keyframes checkboxPop {
+  0%   { transform: scale(1);    }
+  40%  { transform: scale(0.82); }
+  100% { transform: scale(1);    }
+}
