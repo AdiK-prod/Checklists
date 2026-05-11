@@ -62,7 +62,7 @@ export function normalizeTripRow(row) {
   }
 }
 
-function normalizeItem(item) {
+export function normalizeItem(item) {
   return {
     id:              item.id,
     label:           item.label,

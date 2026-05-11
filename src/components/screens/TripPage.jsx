@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, MoreVertical, Plane, Car, Moon,
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
-import { formatTripDates, computeNights, groupByCategory } from '../../lib/utils'
+import { formatTripDates, computeNights } from '../../lib/utils'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -20,7 +20,7 @@ function iconFromTripType(tripType = '') {
 export default function TripPage() {
   const { id: tripId } = useParams()
   const navigate       = useNavigate()
-  const { trip, loading, error, toggleItem, addItem, saveToTemplate } = useTripDetail(tripId)
+  const { trip, loading, error, toggleItem, addItem, saveToTemplate, reorderItems } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
 
@@ -282,9 +282,11 @@ export default function TripPage() {
             key={member.id}
             member={member}
             items={trip.checklists[member.id] || []}
+            templateId={trip.templateId}
             onToggleItem={toggleItem}
             onAddItem={addItem}
             onSaveToTemplate={saveToTemplate}
+            onReorderItems={reorderItems}
           />
         ))}
       </div>
@@ -294,7 +296,15 @@ export default function TripPage() {
 
 // ── Person card ───────────────────────────────────────────────
 
-function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }) {
+function PersonCard({
+  member,
+  items,
+  templateId,
+  onToggleItem,
+  onAddItem,
+  onSaveToTemplate,
+  onReorderItems,
+}) {
   const [isExpanded, setIsExpanded] = useState(true)
   const [addInput, setAddInput]     = useState('')
   const [newItemIds, setNewItemIds] = useState(new Set())
@@ -303,7 +313,18 @@ function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }
   const checked = itemList.filter(i => i.checked).length
   const total   = itemList.length
   const pct     = total === 0 ? 0 : Math.round((checked / total) * 100)
-  const groups  = groupByCategory(itemList)
+
+  const sortedFlat = useMemo(
+    () =>
+      [...itemList].sort(
+        (a, b) =>
+          (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) ||
+          String(a.label).localeCompare(String(b.label)),
+      ),
+    [itemList],
+  )
+
+  const canSaveToTemplate = Boolean(templateId)
 
   const handleAdd = async () => {
     const label = addInput.trim()
@@ -311,6 +332,26 @@ function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }
     setAddInput('')
     const newId = await onAddItem(member.id, label)
     if (newId) setNewItemIds(prev => new Set([...prev, newId]))
+  }
+
+  const handleDropOnItem = (draggedId, targetId) => {
+    if (!draggedId || draggedId === targetId) return
+    const ids = sortedFlat.map(i => i.id)
+    const from = ids.indexOf(draggedId)
+    const to = ids.indexOf(targetId)
+    if (from < 0 || to < 0) return
+    const next = [...ids]
+    next.splice(from, 1)
+    next.splice(to, 0, draggedId)
+    onReorderItems(member.id, next)
+  }
+
+  const handleSaveToTemplate = async (mId, itemId) => {
+    try {
+      await onSaveToTemplate(mId, itemId)
+    } catch {
+      window.alert('Could not save to template. You may need permission or a connection retry.')
+    }
   }
 
   return (
@@ -349,23 +390,42 @@ function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }
       }}>
         <div style={{ overflow: 'hidden' }}>
           <div className="px-[14px] pt-2 pb-[13px]">
-            {groups.map(({ category, items: catItems }) => (
-              <div key={category} className="mb-3 last:mb-0">
-                <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-1.5">
-                  {category}
-                </p>
-                {catItems.map((item, idx) => (
+            {sortedFlat.map((item, index) => {
+              const prev = sortedFlat[index - 1]
+              const showCategory = !prev || prev.category !== item.category
+              return (
+                <div key={item.id}>
+                  {showCategory && (
+                    <p
+                      className={[
+                        'text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-1.5',
+                        index > 0 ? 'mt-3' : '',
+                      ].join(' ')}
+                    >
+                      {item.category}
+                    </p>
+                  )}
                   <ChecklistItemRow
-                    key={item.id}
                     item={item}
-                    isLast={idx === catItems.length - 1}
+                    showBorder={index < sortedFlat.length - 1}
                     isNew={newItemIds.has(item.id)}
+                    canSaveToTemplate={canSaveToTemplate}
                     onToggle={() => onToggleItem(member.id, item.id)}
-                    onSave={() => onSaveToTemplate(member.id, item.id)}
+                    onSave={() => handleSaveToTemplate(member.id, item.id)}
+                    onDragStart={e => {
+                      e.dataTransfer.setData('text/plain', item.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault()
+                      const draggedId = e.dataTransfer.getData('text/plain')
+                      handleDropOnItem(draggedId, item.id)
+                    }}
                   />
-                ))}
-              </div>
-            ))}
+                </div>
+              )
+            })}
 
             {/* Add item row */}
             <div className="flex gap-2 mt-2">
@@ -394,14 +454,33 @@ function PersonCard({ member, items, onToggleItem, onAddItem, onSaveToTemplate }
 
 // ── Checklist item row ────────────────────────────────────────
 
-function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
+function ChecklistItemRow({
+  item,
+  showBorder,
+  isNew,
+  canSaveToTemplate,
+  onToggle,
+  onSave,
+  onDragStart,
+  onDragOver,
+  onDrop,
+}) {
   return (
     <div
       className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
-      style={!isLast ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
+      style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
-      {/* TODO L3: drag-to-reorder */}
-      <GripVertical size={14} className="flex-shrink-0" style={{ opacity: 0.3, cursor: 'grab' }} />
+      <span
+        draggable
+        onDragStart={onDragStart}
+        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint"
+        aria-label="Drag to reorder"
+        onClick={e => e.stopPropagation()}
+      >
+        <GripVertical size={14} style={{ opacity: 0.45 }} />
+      </span>
 
       <div
         onClick={onToggle}
@@ -421,9 +500,13 @@ function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
         {item.label}
       </span>
 
-      {item.isManuallyAdded && !item.savedToTemplate && (
+      {canSaveToTemplate && !item.savedToTemplate && (
         <button
-          onClick={onSave}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onSave()
+          }}
           className="flex items-center gap-1 text-11 flex-shrink-0"
           style={{ color: '#2d6fb5' }}
         >
@@ -431,7 +514,7 @@ function ChecklistItemRow({ item, isLast, isNew, onToggle, onSave }) {
           Save to template
         </button>
       )}
-      {item.isManuallyAdded && item.savedToTemplate && (
+      {item.savedToTemplate && (
         <span className="flex items-center gap-1 text-11 flex-shrink-0" style={{ color: '#2a9d6e' }}>
           <Check size={11} />
           Saved
