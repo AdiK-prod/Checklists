@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Dashboard from './components/screens/Dashboard'
 
 // Screen values: 'dashboard' | 'wizard' | 'trip'
 // Module 7 replaces this state machine with react-router-dom routes.
@@ -26,7 +27,7 @@ export default function App() {
       {/* Mobile container — Module 6 adds the desktop frame */}
       <div className="mx-auto w-full max-w-[430px]">
         {currentScreen === 'dashboard' && (
-          <DashboardPlaceholder navigate={navigate} />
+          <Dashboard navigate={navigate} />
         )}
         {currentScreen === 'wizard' && (
           <WizardPlaceholder navigate={navigate} />
@@ -39,30 +40,7 @@ export default function App() {
   )
 }
 
-// ── Placeholders — replaced screen by screen in Modules 2–4 ──────────────
-
-function DashboardPlaceholder({ navigate }) {
-  return (
-    <div className="p-4 space-y-3">
-      <p className="text-14 font-medium text-content-primary">Dashboard</p>
-      <p className="text-12 text-content-secondary">Module 2 builds this screen.</p>
-      <div className="flex gap-2">
-        <button
-          onClick={navigate.toWizard}
-          className="px-4 py-2 bg-navy text-white rounded-button text-13 font-medium"
-        >
-          New trip
-        </button>
-        <button
-          onClick={() => navigate.toTrip('trip-barcelona')}
-          className="px-4 py-2 border border-input-border rounded-button text-13 text-content-primary"
-        >
-          Barcelona (demo)
-        </button>
-      </div>
-    </div>
-  )
-}
+// ── Placeholders — replaced in Modules 3 and 4 ───────────────────────────
 
 function WizardPlaceholder({ navigate }) {
   return (
