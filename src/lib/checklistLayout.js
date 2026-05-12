@@ -13,7 +13,7 @@ function isDefaultBucketSubcategoryName(name) {
 }
 
 /**
- * Ensures a shared "Misc." category exists on the trip and returns its default "Items" subcategory.
+ * Ensures a shared "Misc." category exists on the trip and returns its default group label row ("Items" in DB).
  * @returns {{ subcategoryId: string, createdSection: object | null, createdSubcategory: object | null }}
  */
 export async function ensureChecklistMiscSectionBucket(client, tripId) {

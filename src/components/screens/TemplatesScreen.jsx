@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, Plane, Car, Moon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Plus, Plane, Car, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
   ensureTemplateHasMinimalTree,
   ensureTemplateMiscSectionDefaultSubcategory,
-  TEMPLATE_MISC_SECTION_NAME,
+  DEFAULT_BUCKET_SUBCATEGORY_NAME,
+  isMiscSectionName,
 } from '../../lib/templateLayout'
 import { asArray } from '../../lib/transforms'
 
@@ -52,11 +53,9 @@ export default function TemplatesScreen() {
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState(null)
   const [newLabel, setNewLabel] = useState('')
-  const [addSubId, setAddSubId] = useState('')
+  const [addTargetSectionId, setAddTargetSectionId] = useState('')
   const [editingNameId, setEditingNameId] = useState(null)
   const [editNameValue, setEditNameValue] = useState('')
-  const [subAddOpen, setSubAddOpen] = useState(null)
-  const [subAddName, setSubAddName] = useState('')
   const [members, setMembers] = useState([])
   const [editingTplSectionId, setEditingTplSectionId] = useState(null)
   const [tplSectionEditName, setTplSectionEditName] = useState('')
@@ -129,7 +128,7 @@ export default function TemplatesScreen() {
   }, [household?.id])
 
   useEffect(() => {
-    setAddSubId('')
+    setAddTargetSectionId('')
     setNewSharedCatName('')
     setNewPersonMemberId('')
     setNewPersonCatName('')
@@ -171,25 +170,39 @@ export default function TemplatesScreen() {
     await load()
   }
 
-  async function removeItem(subcategoryId, itemId) {
-    if (!window.confirm('Remove this item from the template?')) return
-    const { error } = await supabase.from('template_items').delete().eq('id', itemId)
-    if (error) {
-      alert(error.message)
-      return
+  async function resolveTemplateItemBucketId(templateId, targetSectionId) {
+    if (!targetSectionId) {
+      return ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId)
     }
-    await load()
+    const tpl = rows.find(r => r.id === templateId)
+    const sec = tpl?.template_sections?.find(s => s.id === targetSectionId)
+    if (!sec) throw new Error('Category not found.')
+    const subs = [...(sec.template_subcategories || [])].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    )
+    if (subs.length > 0) return subs[0].id
+    const { data: newSub, error } = await supabase
+      .from('template_subcategories')
+      .insert({
+        section_id: sec.id,
+        name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+        sort_order: 0,
+      })
+      .select('id')
+      .single()
+    if (error) throw error
+    return newSub.id
   }
 
   async function addItem(templateId) {
     const label = newLabel.trim()
     if (!label) return
 
-    let subId = addSubId.trim() ? addSubId : null
+    let subId
     try {
-      if (!subId) subId = await ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId)
+      subId = await resolveTemplateItemBucketId(templateId, addTargetSectionId.trim())
     } catch (e) {
-      alert(e?.message || 'Could not resolve subcategory.')
+      alert(e?.message || 'Could not add item to the template.')
       return
     }
 
@@ -217,41 +230,34 @@ export default function TemplatesScreen() {
     await load()
   }
 
-  async function addTemplateSubcategory(sectionId) {
-    const name = subAddName.trim()
-    if (!name) return
-    const sec = rows.flatMap(t => t.template_sections || []).find(s => s.id === sectionId)
-    const subs = asArray(sec?.template_subcategories)
-    const maxSo = subs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { error } = await supabase.from('template_subcategories').insert({
-      section_id: sectionId,
-      name,
-      sort_order: maxSo + 1,
-    })
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setSubAddName('')
-    setSubAddOpen(null)
-    await load()
-  }
-
   async function addTemplateSharedCategory(templateId) {
     const name = newSharedCatName.trim()
     if (!name) return
     const tpl = rows.find(r => r.id === templateId)
     const secs = tpl?.template_sections || []
     const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { error } = await supabase.from('template_sections').insert({
-      template_id: templateId,
-      section_type: 'shared',
-      name,
-      member_id: null,
-      sort_order: maxSo + 1,
-    })
+    const { data: secRow, error } = await supabase
+      .from('template_sections')
+      .insert({
+        template_id: templateId,
+        section_type: 'shared',
+        name,
+        member_id: null,
+        sort_order: maxSo + 1,
+      })
+      .select('id')
+      .single()
     if (error) {
       alert(error.message)
+      return
+    }
+    const { error: subErr } = await supabase.from('template_subcategories').insert({
+      section_id: secRow.id,
+      name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+      sort_order: 0,
+    })
+    if (subErr) {
+      alert(subErr.message)
       return
     }
     setNewSharedCatName('')
@@ -274,15 +280,28 @@ export default function TemplatesScreen() {
     }
     const secs = tpl?.template_sections || []
     const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { error } = await supabase.from('template_sections').insert({
-      template_id: templateId,
-      section_type: 'person',
-      name,
-      member_id: memberId,
-      sort_order: maxSo + 1,
-    })
+    const { data: secRow, error } = await supabase
+      .from('template_sections')
+      .insert({
+        template_id: templateId,
+        section_type: 'person',
+        name,
+        member_id: memberId,
+        sort_order: maxSo + 1,
+      })
+      .select('id')
+      .single()
     if (error) {
       alert(error.message)
+      return
+    }
+    const { error: subErr } = await supabase.from('template_subcategories').insert({
+      section_id: secRow.id,
+      name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+      sort_order: 0,
+    })
+    if (subErr) {
+      alert(subErr.message)
       return
     }
     setNewPersonCatName('')
@@ -313,17 +332,16 @@ export default function TemplatesScreen() {
     await load()
   }
 
-  function subcategoryOptions(tpl) {
-    const opts = []
-    for (const sec of tpl.template_sections || []) {
-      for (const sub of sec.template_subcategories || []) {
-        opts.push({
-          id: sub.id,
-          label: `${sec.name} · ${sub.name}`,
-        })
-      }
-    }
-    return opts
+  function templateCategoryTargets(tpl) {
+    const secs = [...(tpl.template_sections || [])].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    )
+    const shared = secs.filter(s => s.section_type === 'shared')
+    const persons = secs.filter(s => s.section_type === 'person')
+    const misc = shared.filter(s => isMiscSectionName(s.name))
+    const nonMisc = shared.filter(s => !isMiscSectionName(s.name))
+    const ordered = [...nonMisc, ...misc, ...persons]
+    return ordered.filter(s => !isMiscSectionName(s.name))
   }
 
   return (
@@ -342,8 +360,8 @@ export default function TemplatesScreen() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pb-8">
         <p className="text-12 text-content-secondary mb-4">
-          Categories are the top level of each template (shared groups and one block per traveller). Inside each
-          category you can add subcategories and items. Trips copy this structure when you create them.
+          Categories are the top level of each template (shared groups and one card per traveller). Lines are
+          grouped inside each category. Trips copy this structure when you create them.
         </p>
 
         {loading ? (
@@ -356,7 +374,7 @@ export default function TemplatesScreen() {
               const Icon = ICON_MAP[tpl.icon] || Plane
               const expanded = openId === tpl.id
               const itemTotal = countTemplateItems(tpl)
-              const subOpts = subcategoryOptions(tpl)
+              const subOpts = templateCategoryTargets(tpl)
 
               return (
                 <div
@@ -458,13 +476,6 @@ export default function TemplatesScreen() {
                               <>
                                 <div className="min-w-0">
                                   <p className="text-12 font-medium text-content-primary">{sec.name}</p>
-                                  <p className="text-10 text-content-hint">
-                                    {sec.section_type === 'shared'
-                                      ? 'Shared category'
-                                      : `Traveller · ${
-                                          members.find(m => m.id === sec.member_id)?.name || 'Member'
-                                        }`}
-                                  </p>
                                 </div>
                                 <div className="flex items-center gap-2 flex-shrink-0">
                                   <button
@@ -491,7 +502,17 @@ export default function TemplatesScreen() {
                           </div>
                           {(sec.template_subcategories || []).map(sub => (
                             <div key={sub.id} className="pl-2 border-l-2 border-[#e8e4dc]">
-                              <p className="text-12 font-medium text-content-primary mb-1">{sub.name}</p>
+                              <p
+                                className="font-medium mb-1"
+                                style={{
+                                  fontSize: 11,
+                                  color: '#6b6b6b',
+                                  letterSpacing: '0.06em',
+                                  textTransform: 'uppercase',
+                                }}
+                              >
+                                {sub.name}
+                              </p>
                               <ul className="space-y-1">
                                 {(sub.template_items || []).map(it => (
                                   <li
@@ -499,52 +520,12 @@ export default function TemplatesScreen() {
                                     className="flex items-start gap-2 text-13 py-1 border-b border-[rgba(0,0,0,0.04)] last:border-0"
                                   >
                                     <span className="flex-1 min-w-0 text-content-primary">{it.label}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeItem(sub.id, it.id)}
-                                      className="text-content-hint p-1 flex-shrink-0"
-                                      aria-label="Remove item"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
                                   </li>
                                 ))}
                               </ul>
                             </div>
                           ))}
 
-                          <div className="pl-2">
-                            {subAddOpen !== sec.id ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSubAddOpen(sec.id)
-                                  setSubAddName('')
-                                }}
-                                className="text-12 bg-transparent border-0 p-0 cursor-pointer"
-                                style={{ color: '#6b6b6b' }}
-                              >
-                                + Add subcategory
-                              </button>
-                            ) : (
-                              <div className="flex gap-2 items-center mt-1">
-                                <input
-                                  value={subAddName}
-                                  onChange={e => setSubAddName(e.target.value)}
-                                  onKeyDown={e => e.key === 'Enter' && addTemplateSubcategory(sec.id)}
-                                  placeholder="Subcategory name"
-                                  className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => addTemplateSubcategory(sec.id)}
-                                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5"
-                                >
-                                  Add
-                                </button>
-                              </div>
-                            )}
-                          </div>
                         </div>
                       ))}
 
@@ -580,7 +561,7 @@ export default function TemplatesScreen() {
                           <div style={{ overflow: 'hidden' }}>
                             <div className="px-3 pb-3 pt-1 space-y-3 border-t border-[rgba(0,0,0,0.06)]">
                               <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Shared (everyone)</p>
+                                <p className="text-12 text-content-primary">Shared category</p>
                                 <div className="flex gap-2">
                                   <input
                                     value={newSharedCatName}
@@ -588,7 +569,7 @@ export default function TemplatesScreen() {
                                     onKeyDown={e =>
                                       e.key === 'Enter' && addTemplateSharedCategory(tpl.id)
                                     }
-                                    placeholder="Category name"
+                                    placeholder="Category name (e.g. Documents, Health)"
                                     className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
                                   />
                                   <button
@@ -601,7 +582,7 @@ export default function TemplatesScreen() {
                                 </div>
                               </div>
                               <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Traveller (personal)</p>
+                                <p className="text-12 text-content-primary">Traveller category</p>
                                 <select
                                   value={newPersonMemberId}
                                   onChange={e => {
@@ -626,7 +607,10 @@ export default function TemplatesScreen() {
                                     onKeyDown={e =>
                                       e.key === 'Enter' && addTemplatePersonCategory(tpl.id)
                                     }
-                                    placeholder="Category title (optional)"
+                                    placeholder={
+                                      members.find(m => m.id === newPersonMemberId)?.name ||
+                                      'Traveller name'
+                                    }
                                     className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
                                   />
                                   <button
@@ -650,21 +634,19 @@ export default function TemplatesScreen() {
                         <input
                           value={newLabel}
                           onChange={e => setNewLabel(e.target.value)}
-                          placeholder="New item label"
+                          placeholder="New item"
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         />
-                        <label className="block text-11 text-content-secondary">Subcategory (optional)</label>
+                        <label className="block text-11 text-content-secondary">Add to (optional)</label>
                         <select
-                          value={addSubId}
-                          onChange={e => setAddSubId(e.target.value)}
+                          value={addTargetSectionId}
+                          onChange={e => setAddTargetSectionId(e.target.value)}
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         >
-                          <option value="">
-                            {TEMPLATE_MISC_SECTION_NAME} category — default
-                          </option>
-                          {subOpts.map(o => (
-                            <option key={o.id} value={o.id}>
-                              {o.label}
+                          <option value="">Misc. — add to bottom of shared items</option>
+                          {subOpts.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
                             </option>
                           ))}
                         </select>

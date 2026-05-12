@@ -1,10 +1,10 @@
 /** Shared section used in minimal templates / trips alongside Misc. */
 export const DEFAULT_SHARED_SECTION_NAME = 'Essentials'
 
-/** Catch-all shared category (same level as Essentials), not a subcategory name. */
+/** Catch-all shared category (same level as Essentials). */
 export const TEMPLATE_MISC_SECTION_NAME = 'Misc.'
 
-/** Default line bucket inside each category (items still live under subcategories in the schema). */
+/** Default internal group label row per category (DB table: template_subcategories / checklist_subcategories). */
 export const DEFAULT_BUCKET_SUBCATEGORY_NAME = 'Items'
 
 export function isMiscSectionName(name) {
@@ -21,7 +21,7 @@ function isDefaultBucketSubcategoryName(name) {
 }
 
 /**
- * Ensures a shared "Misc." section exists and returns the id of its default subcategory ("Items").
+ * Ensures a shared "Misc." category exists and returns the id of its default "Items" group row.
  */
 export async function ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId) {
   const { data: sections, error: sErr } = await supabase
@@ -80,7 +80,7 @@ export async function ensureTemplateMiscSectionDefaultSubcategory(supabase, temp
 }
 
 /**
- * When a template has no sections, create Essentials + Misc. as shared categories, each with an "Items" subcategory.
+ * When a template has no categories, create Essentials + Misc. as shared categories, each with an "Items" group row.
  */
 export async function ensureTemplateHasMinimalTree(supabase, templateId) {
   const { count, error: cErr } = await supabase

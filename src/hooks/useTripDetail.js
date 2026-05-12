@@ -9,6 +9,7 @@ import {
   buildAiSuggestionsFromSections,
 } from '../lib/transforms'
 import { ensureChecklistMiscSectionBucket } from '../lib/checklistLayout'
+import { DEFAULT_BUCKET_SUBCATEGORY_NAME } from '../lib/templateLayout'
 
 function updateItemInSections(sections, itemId, patch) {
   return sections.map(sec => ({
@@ -235,6 +236,53 @@ export function useTripDetail(tripId) {
     if (uErr) console.error(uErr)
   }, [])
 
+  const ensureFirstChecklistGroupForSection = useCallback(async sectionId => {
+    const subs = [...rawSubByIdRef.current.values()]
+      .filter(s => s.section_id === sectionId)
+      .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+    if (subs.length > 0) return subs[0].id
+
+    const { data: sr, error } = await supabase
+      .from('checklist_subcategories')
+      .insert({
+        section_id: sectionId,
+        name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+        sort_order: 0,
+        is_manually_added: true,
+      })
+      .select()
+      .single()
+    if (error) {
+      console.error(error)
+      throw error
+    }
+    rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(sr.id, sr)
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const newSub = {
+        id: sr.id,
+        name: sr.name,
+        sortOrder: sr.sort_order,
+        isManuallyAdded: sr.is_manually_added,
+        items: [],
+      }
+      const sections = prev.sections.map(sec => {
+        if (sec.id !== sectionId) return sec
+        const nextSubs = [...sec.subcategories, newSub].sort(
+          (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+        )
+        return { ...sec, subcategories: nextSubs }
+      })
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+    return sr.id
+  }, [])
+
   const insertChecklistItem = useCallback(async (subcategoryId, trimmed) => {
     if (!tripId) return null
 
@@ -301,14 +349,13 @@ export function useTripDetail(tripId) {
   )
 
   const addItemToSection = useCallback(
-    async (sectionId, preferredSubId, label) => {
+    async (targetSectionId, label) => {
       if (!tripId) return null
       const trimmed = String(label || '').trim()
       if (!trimmed) return null
 
-      let subcategoryId = preferredSubId && String(preferredSubId).trim() ? preferredSubId : null
-
-      if (!subcategoryId) {
+      if (!targetSectionId) {
+        let subcategoryId = null
         try {
           const { subcategoryId: miscId, createdSection, createdSubcategory } =
             await ensureChecklistMiscSectionBucket(supabase, tripId)
@@ -383,12 +430,53 @@ export function useTripDetail(tripId) {
           console.error('ensure Misc. category bucket:', e?.message, e)
           return null
         }
+        return insertChecklistItem(subcategoryId, trimmed)
       }
 
+      let subcategoryId
+      try {
+        subcategoryId = await ensureFirstChecklistGroupForSection(targetSectionId)
+      } catch (e) {
+        console.error(e)
+        return null
+      }
       return insertChecklistItem(subcategoryId, trimmed)
     },
-    [tripId, insertChecklistItem],
+    [tripId, insertChecklistItem, ensureFirstChecklistGroupForSection],
   )
+
+  const quickAddItem = useCallback(
+    async (targetSectionId, label) => addItemToSection(targetSectionId, label),
+    [addItemToSection],
+  )
+
+  const removeChecklistItem = useCallback(async itemId => {
+    const raw = rawItemsRef.current.find(i => i.id === itemId)
+    if (!raw?.is_manually_added) return
+
+    const { error: delErr } = await supabase.from('checklist_items').delete().eq('id', itemId)
+    if (delErr) {
+      console.error(delErr)
+      throw delErr
+    }
+
+    rawItemsRef.current = rawItemsRef.current.filter(i => i.id !== itemId)
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(sec => ({
+        ...sec,
+        subcategories: sec.subcategories.map(sub => ({
+          ...sub,
+          items: sub.items.filter(i => i.id !== itemId),
+        })),
+      }))
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+  }, [])
 
   const reorderItems = useCallback(async (subcategoryId, orderedIds) => {
     if (!tripId || !orderedIds.length) return
@@ -429,54 +517,6 @@ export function useTripDetail(tripId) {
     const failed = results.find(r => r.error)
     if (failed?.error) console.error('reorder checklist items:', failed.error.message)
   }, [tripId])
-
-  const addSubcategory = useCallback(
-    async (sectionId, name) => {
-      if (!tripId) return null
-      const trimmed = String(name || '').trim()
-      if (!trimmed) return null
-
-      const subs = [...rawSubByIdRef.current.values()].filter(s => s.section_id === sectionId)
-      const sortBase = subs.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
-
-      const { data, error: insErr } = await supabase
-        .from('checklist_subcategories')
-        .insert({
-          section_id: sectionId,
-          name: trimmed,
-          sort_order: sortBase + 1,
-          is_manually_added: true,
-        })
-        .select()
-        .single()
-
-      if (insErr) {
-        console.error(insErr)
-        return null
-      }
-
-      rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(data.id, data)
-
-      setTrip(prev => {
-        if (!prev) return prev
-        const sections = prev.sections.map(sec => {
-          if (sec.id !== sectionId) return sec
-          const newSub = {
-            id: data.id,
-            name: data.name,
-            sortOrder: data.sort_order,
-            isManuallyAdded: data.is_manually_added,
-            items: [],
-          }
-          return { ...sec, subcategories: [...sec.subcategories, newSub] }
-        })
-        return { ...prev, sections }
-      })
-
-      return data.id
-    },
-    [tripId],
-  )
 
   const removeSubcategory = useCallback(async subcategoryId => {
     const { error: delErr } = await supabase.from('checklist_subcategories').delete().eq('id', subcategoryId)
@@ -596,7 +636,25 @@ export function useTripDetail(tripId) {
       }
       if (!data) return null
 
+      const { data: subRow, error: subInsErr } = await supabase
+        .from('checklist_subcategories')
+        .insert({
+          section_id: data.id,
+          name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+          sort_order: 0,
+          is_manually_added: true,
+        })
+        .select()
+        .single()
+      if (subInsErr) {
+        console.error(subInsErr)
+        return null
+      }
+
       rawSectionByIdRef.current = new Map(rawSectionByIdRef.current).set(data.id, data)
+      if (subRow) {
+        rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(subRow.id, subRow)
+      }
 
       setTrip(prev => {
         if (!prev) return prev
@@ -604,6 +662,15 @@ export function useTripDetail(tripId) {
           sectionType === 'person' && memberId
             ? prev.members.find(m => m.id === memberId) || null
             : null
+        const defaultSub = subRow
+          ? {
+              id: subRow.id,
+              name: subRow.name,
+              sortOrder: subRow.sort_order,
+              isManuallyAdded: subRow.is_manually_added,
+              items: [],
+            }
+          : null
         const newSec = {
           id: data.id,
           sectionType: data.section_type,
@@ -611,7 +678,7 @@ export function useTripDetail(tripId) {
           memberId: data.member_id,
           sortOrder: data.sort_order,
           member,
-          subcategories: [],
+          subcategories: defaultSub ? [defaultSub] : [],
         }
         const sections = [...prev.sections, newSec].sort(
           (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
@@ -675,7 +742,8 @@ export function useTripDetail(tripId) {
     toggleItem,
     addItem,
     addItemToSection,
-    addSubcategory,
+    quickAddItem,
+    removeChecklistItem,
     removeSubcategory,
     saveToTemplate,
     reorderItems,

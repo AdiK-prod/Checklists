@@ -28,18 +28,12 @@ import {
   Check,
   BookmarkPlus,
   CloudSun,
-  FileText,
-  ShoppingBag,
-  Apple,
-  Zap,
-  Heart,
-  FolderOpen,
-  X,
 } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
-import { TEMPLATE_MISC_SECTION_NAME } from '../../lib/templateLayout'
+import { isMiscSectionName } from '../../lib/templateLayout'
+import { getSharedCategoryIconMeta } from '../../lib/sharedCategoryIcons'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -55,20 +49,17 @@ function initialsFromName(name = '') {
   return name.slice(0, 2).toUpperCase()
 }
 
-function sharedSectionVisual(name) {
-  const n = String(name || '')
-    .trim()
-    .toLowerCase()
-  const mapKey = {
-    documents: { Icon: FileText, bg: '#E6F1FB', icon: '#185FA5' },
-    essentials: { Icon: ShoppingBag, bg: '#E1F5EE', icon: '#0F6E56' },
-    snacks: { Icon: Apple, bg: '#FAEEDA', icon: '#854F0B' },
-    tech: { Icon: Zap, bg: '#FAEEDA', icon: '#854F0B' },
-    health: { Icon: Heart, bg: '#FBEAF0', icon: '#993556' },
-  }
-  return (
-    mapKey[n] || { Icon: FolderOpen, bg: '#f1efe8', icon: '#6b6b6b' }
-  )
+function tripCategoriesOrdered(sections) {
+  const sorted = [...(sections || [])].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+  const shared = sorted.filter(s => s.sectionType === 'shared')
+  const person = sorted.filter(s => s.sectionType === 'person')
+  const misc = shared.filter(s => isMiscSectionName(s.name))
+  const nonMisc = shared.filter(s => !isMiscSectionName(s.name))
+  return [...nonMisc, ...misc, ...person]
+}
+
+function quickAddCategoryOptions(sections) {
+  return tripCategoriesOrdered(sections).filter(s => !isMiscSectionName(s.name))
 }
 
 function memberForPersonSection(section) {
@@ -125,10 +116,8 @@ export default function TripPage() {
     loading,
     error,
     toggleItem,
-    addItem,
-    addItemToSection,
-    addSubcategory,
-    removeSubcategory,
+    quickAddItem,
+    removeChecklistItem,
     saveToTemplate,
     reorderItems,
     rebuildChecklist,
@@ -163,6 +152,11 @@ export default function TripPage() {
     }
     setAnimatedProgress(totalProgress == null ? 0 : totalProgress)
   }, [totalProgress, trip])
+
+  const quickAddDropdownSections = useMemo(
+    () => quickAddCategoryOptions(trip?.sections),
+    [trip?.sections],
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -509,11 +503,10 @@ export default function TripPage() {
               section={sec}
               variant="shared"
               templateId={trip.templateId}
+              quickAddDropdownSections={quickAddDropdownSections}
               onToggleItem={toggleItem}
-              onAddItem={addItem}
-              onAddItemToSection={addItemToSection}
-              onAddSubcategory={addSubcategory}
-              onRemoveSubcategory={removeSubcategory}
+              quickAddItem={quickAddItem}
+              removeChecklistItem={removeChecklistItem}
               onSaveToTemplate={saveToTemplate}
               onUpdateSection={updateSection}
               onRemoveSection={removeSection}
@@ -527,11 +520,10 @@ export default function TripPage() {
               section={sec}
               variant="person"
               templateId={trip.templateId}
+              quickAddDropdownSections={quickAddDropdownSections}
               onToggleItem={toggleItem}
-              onAddItem={addItem}
-              onAddItemToSection={addItemToSection}
-              onAddSubcategory={addSubcategory}
-              onRemoveSubcategory={removeSubcategory}
+              quickAddItem={quickAddItem}
+              removeChecklistItem={removeChecklistItem}
               onSaveToTemplate={saveToTemplate}
               onUpdateSection={updateSection}
               onRemoveSection={removeSection}
@@ -618,14 +610,14 @@ function TripAddCategoryPanel({ trip, addSection }) {
             style={{ backgroundColor: '#f8f7f4' }}
           >
             <div className="space-y-2 pt-3">
-              <p className="text-12 font-medium text-content-primary">Shared (everyone)</p>
+              <p className="text-12 font-medium text-content-primary">Shared category</p>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={sharedName}
                   onChange={e => setSharedName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddShared()}
-                  placeholder="Category name"
+                  placeholder="Category name (e.g. Documents, Health)"
                   className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
                 />
                 <button
@@ -638,7 +630,7 @@ function TripAddCategoryPanel({ trip, addSection }) {
               </div>
             </div>
             <div className="space-y-2">
-              <p className="text-12 font-medium text-content-primary">Traveller (personal)</p>
+              <p className="text-12 font-medium text-content-primary">Traveller category</p>
               <select
                 value={personMemberId}
                 onChange={e => {
@@ -662,7 +654,7 @@ function TripAddCategoryPanel({ trip, addSection }) {
                   value={personName}
                   onChange={e => setPersonName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddPerson()}
-                  placeholder="Category title (optional)"
+                  placeholder={travellers.find(m => m.id === personMemberId)?.name || 'Traveller name'}
                   className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
                 />
                 <button
@@ -681,28 +673,24 @@ function TripAddCategoryPanel({ trip, addSection }) {
   )
 }
 
+
 function SectionCard({
   section,
   variant,
   templateId,
+  quickAddDropdownSections,
   onToggleItem,
-  onAddItem,
-  onAddItemToSection,
-  onAddSubcategory,
-  onRemoveSubcategory,
+  quickAddItem,
+  removeChecklistItem,
   onSaveToTemplate,
   onUpdateSection,
   onRemoveSection,
 }) {
   const [expanded, setExpanded] = useState(true)
-  const [subInputOpen, setSubInputOpen] = useState(false)
-  const [subName, setSubName] = useState('')
   const [newItemIds, setNewItemIds] = useState(new Set())
   const [saveErrors, setSaveErrors] = useState({})
-  const newSubInputRef = useRef(null)
-  const [pendingFocusSubId, setPendingFocusSubId] = useState(null)
   const [quickLabel, setQuickLabel] = useState('')
-  const [quickSubId, setQuickSubId] = useState('')
+  const [quickTargetSectionId, setQuickTargetSectionId] = useState('')
   const [nameEditOpen, setNameEditOpen] = useState(false)
   const [nameDraft, setNameDraft] = useState(section.name)
 
@@ -719,31 +707,10 @@ function SectionCard({
   )
 
   const { total: secTotal, checked: secChecked } = sectionItemTotals(section)
-  const showSecProgress = secTotal > 0
-  const secPct = secTotal === 0 ? 0 : Math.round((secChecked / secTotal) * 100)
 
-  const vis = sharedSectionVisual(section.name)
-  const SharedIc = vis.Icon
+  const iconMeta = variant === 'shared' ? getSharedCategoryIconMeta(section.name) : null
+  const SharedIc = iconMeta?.icon
   const displayMember = variant === 'person' ? memberForPersonSection(section) : null
-
-  const handleAddSub = async () => {
-    const n = subName.trim()
-    if (!n) return
-    setSubName('')
-    setSubInputOpen(false)
-    const sid = await onAddSubcategory(section.id, n)
-    if (sid) setPendingFocusSubId(sid)
-  }
-
-  const handleRemoveSub = async sub => {
-    if (!sub.isManuallyAdded) return
-    if (!window.confirm('Remove this subcategory and its items?')) return
-    try {
-      await onRemoveSubcategory(sub.id)
-    } catch {
-      window.alert('Could not remove subcategory.')
-    }
-  }
 
   const handleSaveTpl = async itemId => {
     try {
@@ -754,12 +721,12 @@ function SectionCard({
     }
   }
 
-  const handleQuickSectionAdd = async () => {
+  const handleQuickAdd = async () => {
     const label = quickLabel.trim()
     if (!label) return
     setQuickLabel('')
-    const subId = quickSubId.trim() ? quickSubId : null
-    const newId = await onAddItemToSection(section.id, subId, label)
+    const target = quickTargetSectionId.trim() ? quickTargetSectionId : null
+    const newId = await quickAddItem(target, label)
     if (newId) setNewItemIds(prev => new Set([...prev, newId]))
   }
 
@@ -801,17 +768,17 @@ function SectionCard({
         className="w-full flex items-center gap-2.5 px-[14px] py-[13px]"
         style={expanded ? { borderBottom: '0.5px solid rgba(0,0,0,0.08)' } : {}}
       >
-        {variant === 'shared' ? (
+        {variant === 'shared' && SharedIc ? (
           <div
             className="flex items-center justify-center flex-shrink-0"
             style={{
               width: 32,
               height: 32,
               borderRadius: 8,
-              backgroundColor: vis.bg,
+              backgroundColor: iconMeta.bg,
             }}
           >
-            <SharedIc size={16} style={{ color: vis.icon }} />
+            <SharedIc size={16} style={{ color: iconMeta.color }} />
           </div>
         ) : (
           <Avatar member={displayMember} size={32} />
@@ -820,16 +787,9 @@ function SectionCard({
           {section.name}
         </span>
 
-        {showSecProgress && (
-          <div className="flex items-center gap-1.5 mr-1">
-            <div className="h-[3px] rounded-full overflow-hidden bg-surface" style={{ width: 44 }}>
-              <div className="h-full bg-success rounded-full" style={{ width: `${secPct}%` }} />
-            </div>
-            <span className="text-12 text-content-secondary whitespace-nowrap">
-              {secChecked}/{secTotal}
-            </span>
-          </div>
-        )}
+        <span className="text-12 text-content-secondary whitespace-nowrap mr-1">
+          {secChecked}/{secTotal}
+        </span>
 
         <ChevronDown
           size={16}
@@ -849,7 +809,7 @@ function SectionCard({
         }}
       >
         <div style={{ overflow: 'hidden' }}>
-          <div className="px-[14px] pt-2 pb-1 flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(0,0,0,0.06)]">
+          <div className="px-[14px] pt-2 pb-1 flex flex-wrap items-center justify-end gap-2 border-b border-[rgba(0,0,0,0.06)]">
             {nameEditOpen ? (
               <div className="flex flex-1 flex-wrap gap-2 items-center min-w-0">
                 <input
@@ -878,117 +838,79 @@ function SectionCard({
                 </button>
               </div>
             ) : (
-              <>
-                <span className="text-11 text-content-hint">
-                  {variant === 'shared' ? 'Shared category' : 'Traveller category'}
-                </span>
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setNameEditOpen(true)}
-                    className="text-11 bg-transparent border-0 cursor-pointer p-0"
-                    style={{ color: '#2d6fb5' }}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveSection}
-                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setNameEditOpen(true)}
+                  className="text-11 bg-transparent border-0 cursor-pointer p-0"
+                  style={{ color: '#2d6fb5' }}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRemoveSection}
+                  className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
+                >
+                  Remove
+                </button>
+              </div>
             )}
           </div>
           <div className="px-[14px] pt-2 pb-[13px] space-y-3">
-            {sortedSubs.map(sub => (
-              <SubcategoryBlock
+            {secTotal === 0 && (
+              <p className="text-11 italic mb-1" style={{ color: '#9a9a9a' }}>
+                No items yet — use Add item below
+              </p>
+            )}
+            {sortedSubs.map((sub, idx) => (
+              <GroupLabelBlock
                 key={sub.id}
                 sub={sub}
-                section={section}
+                isFirstGroup={idx === 0}
                 templateId={templateId}
-                focusAddItem={pendingFocusSubId === sub.id}
-                onFocusedAddItem={() => setPendingFocusSubId(null)}
                 newItemIds={newItemIds}
-                setNewItemIds={setNewItemIds}
                 onToggleItem={onToggleItem}
-                onAddItem={onAddItem}
                 onSaveToTemplate={handleSaveTpl}
                 saveError={saveErrors}
-                onRemoveSubcategory={() => handleRemoveSub(sub)}
+                removeChecklistItem={removeChecklistItem}
               />
             ))}
 
-            <div>
-              {!subInputOpen ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSubInputOpen(true)
-                    setTimeout(() => newSubInputRef.current?.focus(), 0)
-                  }}
-                  className="text-12 bg-transparent border-0 p-0 cursor-pointer"
-                  style={{ color: '#6b6b6b' }}
-                >
-                  + Add subcategory
-                </button>
-              ) : (
-                <div className="flex gap-2 items-center mt-1">
-                  <input
-                    ref={newSubInputRef}
-                    value={subName}
-                    onChange={e => setSubName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleAddSub()}
-                    placeholder="Subcategory name"
-                    className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddSub}
-                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2"
-                  >
-                    Add
-                  </button>
-                </div>
-              )}
-            </div>
-
             <div className="pt-2 border-t border-[rgba(0,0,0,0.06)] space-y-2">
-              <p className="text-11 font-medium text-content-secondary">Quick add</p>
-              <select
-                value={quickSubId}
-                onChange={e => setQuickSubId(e.target.value)}
-                aria-label="Subcategory for quick add"
-                className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-              >
-                <option value="">
-                  {TEMPLATE_MISC_SECTION_NAME} category — default
-                </option>
-                {sortedSubs.map(sub => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={quickLabel}
                   onChange={e => setQuickLabel(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleQuickSectionAdd()}
-                  placeholder="Add item…"
+                  onKeyDown={e => e.key === 'Enter' && handleQuickAdd()}
+                  placeholder="Add item"
                   className="flex-1 text-13 text-content-primary rounded-input px-3 py-2 bg-white focus:outline-none"
                   style={{ border: '1px dashed #e0ddd8' }}
                 />
                 <button
                   type="button"
-                  onClick={handleQuickSectionAdd}
+                  onClick={handleQuickAdd}
                   className="text-12 font-medium text-white bg-navy hover:bg-navy-hover rounded-input px-3 py-[7px] flex-shrink-0 transition-colors"
                 >
-                  Add
+                  + Add
                 </button>
+              </div>
+              <div>
+                <label className="block text-11 text-content-secondary mb-1">Add to (optional)</label>
+                <select
+                  value={quickTargetSectionId}
+                  onChange={e => setQuickTargetSectionId(e.target.value)}
+                  aria-label="Add item to category"
+                  className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                >
+                  <option value="">Misc. — default</option>
+                  {quickAddDropdownSections.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
@@ -998,29 +920,16 @@ function SectionCard({
   )
 }
 
-function SubcategoryBlock({
+function GroupLabelBlock({
   sub,
+  isFirstGroup,
   templateId,
-  focusAddItem,
-  onFocusedAddItem,
   newItemIds,
-  setNewItemIds,
   onToggleItem,
-  onAddItem,
   onSaveToTemplate,
   saveError,
-  onRemoveSubcategory,
+  removeChecklistItem,
 }) {
-  const [addInput, setAddInput] = useState('')
-  const addRef = useRef(null)
-
-  useEffect(() => {
-    if (focusAddItem && addRef.current) {
-      addRef.current.focus()
-      onFocusedAddItem()
-    }
-  }, [focusAddItem, onFocusedAddItem])
-
   const sortedItems = useMemo(
     () =>
       [...(sub.items || [])].sort(
@@ -1034,29 +943,20 @@ function SubcategoryBlock({
   const itemIds = useMemo(() => sortedItems.map(i => i.id), [sortedItems])
   const canSaveToTemplate = Boolean(templateId)
 
-  const handleAdd = async () => {
-    const label = addInput.trim()
-    if (!label) return
-    setAddInput('')
-    const newId = await onAddItem(sub.id, label)
-    if (newId) setNewItemIds(prev => new Set([...prev, newId]))
-  }
-
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <p className="text-11 font-medium text-content-secondary">{sub.name}</p>
-        {sub.isManuallyAdded && (
-          <button
-            type="button"
-            onClick={onRemoveSubcategory}
-            className="p-0.5 text-content-hint bg-transparent border-0 cursor-pointer"
-            aria-label="Remove subcategory"
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
+      <p
+        className="font-medium uppercase"
+        style={{
+          fontSize: 11,
+          color: '#6b6b6b',
+          letterSpacing: '0.06em',
+          marginTop: isFirstGroup ? 0 : 12,
+          marginBottom: 4,
+        }}
+      >
+        {sub.name}
+      </p>
       {sortedItems.length === 0 && (
         <p className="text-11 mb-2 italic" style={{ color: '#9a9a9a' }}>
           No items yet
@@ -1073,30 +973,11 @@ function SubcategoryBlock({
               onToggle={() => onToggleItem(item.id)}
               onSave={() => onSaveToTemplate(item.id)}
               saveFailed={saveError[item.id]}
+              onDelete={() => removeChecklistItem(item.id)}
             />
           </div>
         ))}
       </SortableContext>
-
-      <div className="flex gap-2 mt-2">
-        <input
-          ref={addRef}
-          type="text"
-          value={addInput}
-          onChange={e => setAddInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
-          placeholder="Add item..."
-          className="flex-1 text-13 text-content-primary rounded-input px-3 py-2 bg-white focus:outline-none"
-          style={{ border: '1px dashed #e0ddd8' }}
-        />
-        <button
-          type="button"
-          onClick={handleAdd}
-          className="text-12 font-medium text-white bg-navy hover:bg-navy-hover rounded-input px-3 py-[7px] flex-shrink-0 transition-colors"
-        >
-          Add
-        </button>
-      </div>
     </div>
   )
 }
@@ -1141,16 +1022,50 @@ function ChecklistItemRow({
   onToggle,
   onSave,
   saveFailed,
+  onDelete,
   activatorRef,
   dragAttributes,
   dragListeners,
 }) {
   const showSaveToTemplate = canSaveToTemplate && !item.savedToTemplate && item.isManuallyAdded
+  const canDelete = item.isManuallyAdded
+  const [showDelete, setShowDelete] = useState(false)
+  const longPressTimer = useRef(null)
+  const touchStartX = useRef(null)
+
+  const clearLongPress = () => {
+    if (longPressTimer.current != null) {
+      window.clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  useEffect(() => () => clearLongPress(), [])
+
+  const handleDeleteClick = async e => {
+    e.stopPropagation()
+    try {
+      await onDelete()
+    } catch {
+      window.alert('Could not remove item.')
+    }
+    setShowDelete(false)
+  }
 
   return (
     <div
       className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
       style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
+      onTouchStart={e => {
+        touchStartX.current = e.touches[0].clientX
+      }}
+      onTouchEnd={e => {
+        const x0 = touchStartX.current
+        touchStartX.current = null
+        if (x0 == null || !canDelete) return
+        const dx = x0 - e.changedTouches[0].clientX
+        if (dx > 48) setShowDelete(true)
+      }}
     >
       <button
         type="button"
@@ -1160,7 +1075,7 @@ function ChecklistItemRow({
         {...dragAttributes}
         {...dragListeners}
       >
-        <GripVertical size={14} style={{ opacity: 0.45 }} />
+        <GripVertical size={14} style={{ opacity: 0.3 }} />
       </button>
 
       <div
@@ -1170,18 +1085,38 @@ function ChecklistItemRow({
         onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
         className={[
           'w-[18px] h-[18px] rounded-[4px] flex items-center justify-center flex-shrink-0 cursor-pointer checkbox-interactive',
-          item.checked ? 'bg-success' : '',
+          item.checked ? '' : '',
         ].join(' ')}
-        style={!item.checked ? { border: '1.5px solid rgba(0,0,0,0.2)' } : {}}
+        style={
+          !item.checked
+            ? { border: '1.5px solid rgba(0,0,0,0.2)' }
+            : { backgroundColor: '#2a9d6e' }
+        }
       >
         {item.checked && <Check size={11} color="white" strokeWidth={3} />}
       </div>
 
       <span
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
+        onPointerDown={
+          canDelete
+            ? () => {
+                clearLongPress()
+                longPressTimer.current = window.setTimeout(() => setShowDelete(true), 500)
+              }
+            : undefined
+        }
+        onPointerUp={canDelete ? clearLongPress : undefined}
+        onPointerLeave={canDelete ? clearLongPress : undefined}
+        onPointerCancel={canDelete ? clearLongPress : undefined}
+        onClick={onToggle}
         className={[
-          'flex-1 text-13 min-w-0 transition-colors',
-          item.checked ? 'line-through text-content-hint' : 'text-content-primary',
+          'flex-1 text-13 min-w-0 transition-colors cursor-pointer text-left bg-transparent border-0 p-0',
+          item.checked ? 'line-through' : 'text-content-primary',
         ].join(' ')}
+        style={item.checked ? { color: '#9a9a9a' } : undefined}
       >
         {item.label}
       </span>
@@ -1199,8 +1134,8 @@ function ChecklistItemRow({
             e.stopPropagation()
             onSave()
           }}
-          className="flex items-center gap-1 text-11 flex-shrink-0"
-          style={{ color: '#2d6fb5' }}
+          className="flex items-center gap-1 flex-shrink-0 bg-transparent border-0 cursor-pointer p-0"
+          style={{ color: '#2d6fb5', fontSize: 11 }}
         >
           <BookmarkPlus size={12} />
           Save to template
@@ -1211,6 +1146,18 @@ function ChecklistItemRow({
           <Check size={11} />
           ✓ Saved
         </span>
+      )}
+
+      {canDelete && showDelete && (
+        <button
+          type="button"
+          onClick={handleDeleteClick}
+          className="flex-shrink-0 text-11 font-medium px-1.5 py-0.5 rounded bg-transparent border-0 cursor-pointer"
+          style={{ color: '#c03434' }}
+          aria-label="Remove item"
+        >
+          ×
+        </button>
       )}
     </div>
   )

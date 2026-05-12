@@ -183,7 +183,7 @@ async function createChecklistFromTemplate(client, tripId, templateId, travellin
 }
 
 /**
- * Minimal shared categories (Essentials + Misc.) with an "Items" subcategory each, if the trip has no sections.
+ * Minimal shared categories (Essentials + Misc.) with an "Items" group row each, if the trip has no sections.
  */
 export async function ensureMinimalChecklistForTrip(tripId) {
   const { count, error: cErr } = await supabase
