@@ -504,6 +504,9 @@ export function useTripDetail(tripId) {
       if (!payload || payload.mode === 'misc') {
         return addItemToSection(null, trimmed)
       }
+      if (payload.mode === 'section' && payload.sectionId) {
+        return addItemToSection(payload.sectionId, trimmed)
+      }
       if (payload.mode === 'category' && payload.subcategoryId) {
         return insertChecklistItem(payload.subcategoryId, trimmed)
       }

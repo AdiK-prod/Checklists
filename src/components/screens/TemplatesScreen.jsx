@@ -1,6 +1,22 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, ChevronUp, Plus, Plane, Car, Moon } from 'lucide-react'
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  KeyboardSensor,
+  closestCenter,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ArrowLeft, ChevronDown, ChevronUp, GripVertical, Plus, Plane, Car, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
@@ -65,6 +81,11 @@ export default function TemplatesScreen() {
   const [newPersonCatName, setNewPersonCatName] = useState('')
   const [addCategoryOpen, setAddCategoryOpen] = useState(false)
   const [tplCategoryDraftBySection, setTplCategoryDraftBySection] = useState({})
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const load = useCallback(async () => {
     if (!household?.id) {
@@ -377,6 +398,79 @@ export default function TemplatesScreen() {
     await load()
   }
 
+  async function removeTemplateCategory(sub, sec) {
+    const n = asArray(sub.template_items).length
+    if (!window.confirm(`Remove category "${sub.name}" and all ${n} item(s) inside?`)) return
+    const { error } = await supabase.from('template_subcategories').delete().eq('id', sub.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    const wasOnlyCategory = (sec.template_subcategories || []).length === 1
+    if (wasOnlyCategory) {
+      const { error: insErr } = await supabase.from('template_subcategories').insert({
+        section_id: sec.id,
+        name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+        sort_order: 0,
+      })
+      if (insErr) {
+        alert(insErr.message)
+        return
+      }
+    }
+    await load()
+  }
+
+  async function removeTemplateItem(itemId) {
+    const { error } = await supabase.from('template_items').delete().eq('id', itemId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    await load()
+  }
+
+  async function reorderTemplateItems(subcategoryId, orderedIds) {
+    if (!orderedIds.length) return
+    const results = await Promise.all(
+      orderedIds.map((id, idx) =>
+        supabase.from('template_items').update({ sort_order: (idx + 1) * 10 }).eq('id', id),
+      ),
+    )
+    const failed = results.find(r => r.error)
+    if (failed?.error) {
+      alert(failed.error.message)
+      return
+    }
+    await load()
+  }
+
+  function handleTemplateDragEnd(tpl, event) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const activeId = active.id
+    let subId = null
+    let ids = []
+    outer: for (const sec of tpl.template_sections || []) {
+      for (const sub of sec.template_subcategories || []) {
+        const sorted = [...asArray(sub.template_items)].sort(
+          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+        )
+        const rowIds = sorted.map(i => i.id)
+        if (rowIds.includes(activeId)) {
+          subId = sub.id
+          ids = rowIds
+          break outer
+        }
+      }
+    }
+    if (!subId) return
+    const oldIndex = ids.indexOf(active.id)
+    const newIndex = ids.indexOf(over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    reorderTemplateItems(subId, arrayMove(ids, oldIndex, newIndex))
+  }
+
   async function addTemplateCategoryRow(sectionId, templateId) {
     const name = (tplCategoryDraftBySection[sectionId] || '').trim()
     if (!name) return
@@ -470,6 +564,11 @@ export default function TemplatesScreen() {
                   </button>
 
                   {expanded && (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={e => handleTemplateDragEnd(tpl, e)}
+                    >
                     <div className="px-3 pb-3 border-t border-[rgba(0,0,0,0.06)] pt-3 space-y-4">
                       {editingNameId === tpl.id ? (
                         <div className="flex gap-2">
@@ -565,31 +664,51 @@ export default function TemplatesScreen() {
                               </>
                             )}
                           </div>
-                          {(sec.template_subcategories || []).map(sub => (
-                            <div key={sub.id} className="pl-2 border-l-2 border-[#e8e4dc]">
-                              <p
-                                className="font-medium mb-1"
-                                style={{
-                                  fontSize: 11,
-                                  color: '#6b6b6b',
-                                  letterSpacing: '0.06em',
-                                  textTransform: 'uppercase',
-                                }}
-                              >
-                                {sub.name}
-                              </p>
-                              <ul className="space-y-1">
-                                {(sub.template_items || []).map(it => (
-                                  <li
-                                    key={it.id}
-                                    className="flex items-start gap-2 text-13 py-1 border-b border-[rgba(0,0,0,0.04)] last:border-0"
+                          {(sec.template_subcategories || []).map(sub => {
+                            const sortedTplItems = [...asArray(sub.template_items)].sort(
+                              (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+                            )
+                            const itemIds = sortedTplItems.map(it => it.id)
+                            return (
+                              <div key={sub.id} className="pl-2 border-l-2 border-[#e8e4dc]">
+                                <div className="flex items-start justify-between gap-2 mb-1">
+                                  <p
+                                    className="font-medium flex-1 min-w-0"
+                                    style={{
+                                      fontSize: 11,
+                                      color: '#6b6b6b',
+                                      letterSpacing: '0.06em',
+                                      textTransform: 'uppercase',
+                                    }}
                                   >
-                                    <span className="flex-1 min-w-0 text-content-primary">{it.label}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
+                                    {sub.name}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeTemplateCategory(sub, sec)}
+                                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0 flex-shrink-0"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                                <SortableContext
+                                  items={itemIds}
+                                  strategy={verticalListSortingStrategy}
+                                >
+                                  <ul className="space-y-0">
+                                    {sortedTplItems.map((it, idx) => (
+                                      <SortableTemplateItemRow
+                                        key={it.id}
+                                        item={it}
+                                        showBorder={idx < sortedTplItems.length - 1}
+                                        onRemove={() => removeTemplateItem(it.id)}
+                                      />
+                                    ))}
+                                  </ul>
+                                </SortableContext>
+                              </div>
+                            )
+                          })}
 
                           <div className="flex gap-2 items-center pt-1">
                             <input
@@ -773,6 +892,7 @@ export default function TemplatesScreen() {
                         </button>
                       </div>
                     </div>
+                    </DndContext>
                   )}
                 </div>
               )
@@ -781,5 +901,56 @@ export default function TemplatesScreen() {
         )}
       </div>
     </div>
+  )
+}
+
+function SortableTemplateItemRow({ item, showBorder, onRemove }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id })
+
+  const dndStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined,
+    zIndex: isDragging ? 2 : undefined,
+    position: isDragging ? 'relative' : undefined,
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        ...dndStyle,
+        ...(showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.04)' } : {}),
+      }}
+      className="flex items-center gap-2 text-13 py-1 list-none"
+    >
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={14} style={{ opacity: 0.35 }} />
+      </button>
+      <span className="flex-1 min-w-0 text-content-primary">{item.label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 leading-none"
+        aria-label="Remove item"
+      >
+        ×
+      </button>
+    </li>
   )
 }
