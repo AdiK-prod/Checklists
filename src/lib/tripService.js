@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { TEMPLATE_MISC_SUBCATEGORY } from './templateLayout'
+import { TEMPLATE_MISC_SECTION_NAME, DEFAULT_BUCKET_SUBCATEGORY_NAME } from './templateLayout'
 
 export const CHECKLIST_INSERT_CHUNK = 200
 const AI_LOG_MAX_CHARS = 120_000
@@ -183,7 +183,7 @@ async function createChecklistFromTemplate(client, tripId, templateId, travellin
 }
 
 /**
- * One shared section + one subcategory so the trip is usable if template copy failed.
+ * Minimal shared categories (Essentials + Misc.) with an "Items" subcategory each, if the trip has no sections.
  */
 export async function ensureMinimalChecklistForTrip(tripId) {
   const { count, error: cErr } = await supabase
@@ -193,7 +193,7 @@ export async function ensureMinimalChecklistForTrip(tripId) {
   if (cErr) throw cErr
   if ((count ?? 0) > 0) return
 
-  const { data: section, error: sErr } = await supabase
+  const { data: ess, error: sErr } = await supabase
     .from('checklist_sections')
     .insert({
       trip_id: tripId,
@@ -206,13 +206,34 @@ export async function ensureMinimalChecklistForTrip(tripId) {
     .single()
   if (sErr) throw sErr
 
-  const { error: subErr } = await supabase.from('checklist_subcategories').insert({
-    section_id: section.id,
-    name: TEMPLATE_MISC_SUBCATEGORY,
+  const { error: essSubErr } = await supabase.from('checklist_subcategories').insert({
+    section_id: ess.id,
+    name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
     sort_order: 0,
     is_manually_added: true,
   })
-  if (subErr) throw subErr
+  if (essSubErr) throw essSubErr
+
+  const { data: misc, error: mErr } = await supabase
+    .from('checklist_sections')
+    .insert({
+      trip_id: tripId,
+      section_type: 'shared',
+      name: TEMPLATE_MISC_SECTION_NAME,
+      member_id: null,
+      sort_order: 1,
+    })
+    .select('id')
+    .single()
+  if (mErr) throw mErr
+
+  const { error: miscSubErr } = await supabase.from('checklist_subcategories').insert({
+    section_id: misc.id,
+    name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+    sort_order: 0,
+    is_manually_added: true,
+  })
+  if (miscSubErr) throw miscSubErr
 }
 
 /**

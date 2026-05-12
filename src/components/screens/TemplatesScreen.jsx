@@ -5,8 +5,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
   ensureTemplateHasMinimalTree,
-  ensureTemplateMiscSubcategory,
-  TEMPLATE_MISC_SUBCATEGORY,
+  ensureTemplateMiscSectionDefaultSubcategory,
+  TEMPLATE_MISC_SECTION_NAME,
 } from '../../lib/templateLayout'
 import { asArray } from '../../lib/transforms'
 
@@ -63,6 +63,7 @@ export default function TemplatesScreen() {
   const [newSharedCatName, setNewSharedCatName] = useState('')
   const [newPersonMemberId, setNewPersonMemberId] = useState('')
   const [newPersonCatName, setNewPersonCatName] = useState('')
+  const [addCategoryOpen, setAddCategoryOpen] = useState(false)
 
   const load = useCallback(async () => {
     if (!household?.id) {
@@ -134,6 +135,7 @@ export default function TemplatesScreen() {
     setNewPersonCatName('')
     setEditingTplSectionId(null)
     setTplSectionEditName('')
+    setAddCategoryOpen(false)
   }, [openId])
 
   useEffect(() => {
@@ -185,7 +187,7 @@ export default function TemplatesScreen() {
 
     let subId = addSubId.trim() ? addSubId : null
     try {
-      if (!subId) subId = await ensureTemplateMiscSubcategory(supabase, templateId)
+      if (!subId) subId = await ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId)
     } catch (e) {
       alert(e?.message || 'Could not resolve subcategory.')
       return
@@ -547,63 +549,96 @@ export default function TemplatesScreen() {
                       ))}
 
                       <div
-                        className="rounded-input bg-page p-3 space-y-3"
+                        className="rounded-input bg-page overflow-hidden"
                         style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
                       >
-                        <p className="text-11 font-medium text-content-secondary">Add category</p>
-                        <div className="space-y-2">
-                          <p className="text-12 text-content-primary">Shared (everyone)</p>
-                          <div className="flex gap-2">
-                            <input
-                              value={newSharedCatName}
-                              onChange={e => setNewSharedCatName(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && addTemplateSharedCategory(tpl.id)}
-                              placeholder="Category name"
-                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => addTemplateSharedCategory(tpl.id)}
-                              className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
-                            >
-                              Add
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-12 text-content-primary">Traveller (personal)</p>
-                          <select
-                            value={newPersonMemberId}
-                            onChange={e => {
-                              const id = e.target.value
-                              setNewPersonMemberId(id)
-                              const m = members.find(x => x.id === id)
-                              if (m) setNewPersonCatName(m.name)
+                        <button
+                          type="button"
+                          onClick={() => setAddCategoryOpen(o => !o)}
+                          aria-expanded={addCategoryOpen}
+                          className="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-page"
+                        >
+                          <span className="flex-1 text-11 font-medium uppercase tracking-[0.08em] text-content-secondary">
+                            Add category
+                          </span>
+                          <ChevronDown
+                            size={18}
+                            className="text-content-hint flex-shrink-0"
+                            style={{
+                              transition: 'transform 200ms ease',
+                              transform: addCategoryOpen ? 'rotate(180deg)' : 'rotate(0deg)',
                             }}
-                            className="w-full text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                          >
-                            <option value="">Select household member…</option>
-                            {members.map(m => (
-                              <option key={m.id} value={m.id}>
-                                {m.name}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="flex gap-2">
-                            <input
-                              value={newPersonCatName}
-                              onChange={e => setNewPersonCatName(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && addTemplatePersonCategory(tpl.id)}
-                              placeholder="Category title (optional)"
-                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => addTemplatePersonCategory(tpl.id)}
-                              className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
-                            >
-                              Add
-                            </button>
+                          />
+                        </button>
+                        <div
+                          style={{
+                            display: 'grid',
+                            transition: 'grid-template-rows 250ms ease',
+                            gridTemplateRows: addCategoryOpen ? '1fr' : '0fr',
+                          }}
+                        >
+                          <div style={{ overflow: 'hidden' }}>
+                            <div className="px-3 pb-3 pt-1 space-y-3 border-t border-[rgba(0,0,0,0.06)]">
+                              <div className="space-y-2">
+                                <p className="text-12 text-content-primary">Shared (everyone)</p>
+                                <div className="flex gap-2">
+                                  <input
+                                    value={newSharedCatName}
+                                    onChange={e => setNewSharedCatName(e.target.value)}
+                                    onKeyDown={e =>
+                                      e.key === 'Enter' && addTemplateSharedCategory(tpl.id)
+                                    }
+                                    placeholder="Category name"
+                                    className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => addTemplateSharedCategory(tpl.id)}
+                                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <p className="text-12 text-content-primary">Traveller (personal)</p>
+                                <select
+                                  value={newPersonMemberId}
+                                  onChange={e => {
+                                    const id = e.target.value
+                                    setNewPersonMemberId(id)
+                                    const m = members.find(x => x.id === id)
+                                    if (m) setNewPersonCatName(m.name)
+                                  }}
+                                  className="w-full text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                                >
+                                  <option value="">Select household member…</option>
+                                  {members.map(m => (
+                                    <option key={m.id} value={m.id}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex gap-2">
+                                  <input
+                                    value={newPersonCatName}
+                                    onChange={e => setNewPersonCatName(e.target.value)}
+                                    onKeyDown={e =>
+                                      e.key === 'Enter' && addTemplatePersonCategory(tpl.id)
+                                    }
+                                    placeholder="Category title (optional)"
+                                    className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => addTemplatePersonCategory(tpl.id)}
+                                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -625,7 +660,7 @@ export default function TemplatesScreen() {
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         >
                           <option value="">
-                            {TEMPLATE_MISC_SUBCATEGORY} — default (bottom of shared area)
+                            {TEMPLATE_MISC_SECTION_NAME} category — default
                           </option>
                           {subOpts.map(o => (
                             <option key={o.id} value={o.id}>

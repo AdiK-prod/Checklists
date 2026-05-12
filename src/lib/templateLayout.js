@@ -1,22 +1,29 @@
-/**
- * Default catch-all for template items when the user does not pick a subcategory.
- * Placed at the bottom of the last shared section's subcategory list.
- */
-export const TEMPLATE_MISC_SUBCATEGORY = 'Misc.'
-const DEFAULT_SHARED_SECTION = 'Essentials'
+/** Shared section used in minimal templates / trips alongside Misc. */
+export const DEFAULT_SHARED_SECTION_NAME = 'Essentials'
 
-export function isMiscSubcategoryName(name) {
+/** Catch-all shared category (same level as Essentials), not a subcategory name. */
+export const TEMPLATE_MISC_SECTION_NAME = 'Misc.'
+
+/** Default line bucket inside each category (items still live under subcategories in the schema). */
+export const DEFAULT_BUCKET_SUBCATEGORY_NAME = 'Items'
+
+export function isMiscSectionName(name) {
   const n = String(name || '')
     .trim()
     .toLowerCase()
   return n === 'misc' || n === 'misc.'
 }
 
+function isDefaultBucketSubcategoryName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase() === DEFAULT_BUCKET_SUBCATEGORY_NAME.toLowerCase()
+}
+
 /**
- * Ensures the template has at least one shared section and a bottom "Misc." subcategory.
- * @returns {Promise<string>} template_subcategories.id for Misc.
+ * Ensures a shared "Misc." section exists and returns the id of its default subcategory ("Items").
  */
-export async function ensureTemplateMiscSubcategory(supabase, templateId) {
+export async function ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId) {
   const { data: sections, error: sErr } = await supabase
     .from('template_sections')
     .select('id, section_type, name, sort_order')
@@ -25,49 +32,46 @@ export async function ensureTemplateMiscSubcategory(supabase, templateId) {
 
   if (sErr) throw sErr
 
-  let list = sections || []
-  let sharedSorted = list.filter(s => s.section_type === 'shared').sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+  const list = sections || []
+  const sharedList = list.filter(s => s.section_type === 'shared')
+  let miscSec = sharedList.find(s => isMiscSectionName(s.name))
 
-  if (!sharedSorted.length) {
-    const minSo =
-      list.length === 0 ? 0 : Math.min(...list.map(s => Number(s.sort_order) || 0))
+  if (!miscSec) {
+    const maxSo = list.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
     const { data: ins, error: iErr } = await supabase
       .from('template_sections')
       .insert({
         template_id: templateId,
         section_type: 'shared',
-        name: DEFAULT_SHARED_SECTION,
+        name: TEMPLATE_MISC_SECTION_NAME,
         member_id: null,
-        sort_order: minSo - 1,
+        sort_order: maxSo + 1,
       })
       .select('id, section_type, name, sort_order')
       .single()
     if (iErr) throw iErr
-    sharedSorted = [ins]
-    list = [...list, ins]
+    miscSec = ins
   }
-
-  const targetSection = sharedSorted[sharedSorted.length - 1]
 
   const { data: subs, error: subErr } = await supabase
     .from('template_subcategories')
     .select('id, name, sort_order')
-    .eq('section_id', targetSection.id)
+    .eq('section_id', miscSec.id)
     .order('sort_order')
 
   if (subErr) throw subErr
 
   const subList = subs || []
-  const existingMisc = subList.find(s => isMiscSubcategoryName(s.name))
-  if (existingMisc) return existingMisc.id
+  let bucket = subList.find(s => isDefaultBucketSubcategoryName(s.name))
+  if (bucket) return bucket.id
 
-  const maxSo = subList.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+  const maxSub = subList.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
   const { data: newSub, error: insErr } = await supabase
     .from('template_subcategories')
     .insert({
-      section_id: targetSection.id,
-      name: TEMPLATE_MISC_SUBCATEGORY,
-      sort_order: maxSo + 1,
+      section_id: miscSec.id,
+      name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+      sort_order: maxSub + 1,
     })
     .select('id')
     .single()
@@ -76,8 +80,7 @@ export async function ensureTemplateMiscSubcategory(supabase, templateId) {
 }
 
 /**
- * When a template has no sections at all, callers should run this so the UI can show
- * structure (+ subcategory controls). Creates shared Essentials + Misc via {@link ensureTemplateMiscSubcategory}.
+ * When a template has no sections, create Essentials + Misc. as shared categories, each with an "Items" subcategory.
  */
 export async function ensureTemplateHasMinimalTree(supabase, templateId) {
   const { count, error: cErr } = await supabase
@@ -87,6 +90,43 @@ export async function ensureTemplateHasMinimalTree(supabase, templateId) {
   if (cErr) throw cErr
   if ((count ?? 0) > 0) return false
 
-  await ensureTemplateMiscSubcategory(supabase, templateId)
+  const { data: ess, error: e1 } = await supabase
+    .from('template_sections')
+    .insert({
+      template_id: templateId,
+      section_type: 'shared',
+      name: DEFAULT_SHARED_SECTION_NAME,
+      member_id: null,
+      sort_order: 0,
+    })
+    .select('id')
+    .single()
+  if (e1) throw e1
+
+  await supabase.from('template_subcategories').insert({
+    section_id: ess.id,
+    name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+    sort_order: 0,
+  })
+
+  const { data: misc, error: e2 } = await supabase
+    .from('template_sections')
+    .insert({
+      template_id: templateId,
+      section_type: 'shared',
+      name: TEMPLATE_MISC_SECTION_NAME,
+      member_id: null,
+      sort_order: 1,
+    })
+    .select('id')
+    .single()
+  if (e2) throw e2
+
+  await supabase.from('template_subcategories').insert({
+    section_id: misc.id,
+    name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+    sort_order: 0,
+  })
+
   return true
 }

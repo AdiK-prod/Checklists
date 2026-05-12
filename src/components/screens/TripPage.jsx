@@ -39,7 +39,7 @@ import {
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
-import { TEMPLATE_MISC_SUBCATEGORY } from '../../lib/templateLayout'
+import { TEMPLATE_MISC_SECTION_NAME } from '../../lib/templateLayout'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -546,6 +546,7 @@ export default function TripPage() {
 }
 
 function TripAddCategoryPanel({ trip, addSection }) {
+  const [open, setOpen] = useState(false)
   const [sharedName, setSharedName] = useState('')
   const [personMemberId, setPersonMemberId] = useState('')
   const [personName, setPersonName] = useState('')
@@ -583,69 +584,97 @@ function TripAddCategoryPanel({ trip, addSection }) {
 
   return (
     <div
-      className="bg-white rounded-card mb-[10px] p-3 space-y-4"
+      className="bg-white rounded-card mb-[10px] overflow-hidden"
       style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
     >
-      <p
-        className="text-11 font-medium uppercase tracking-[0.08em] text-content-secondary"
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-3 text-left"
       >
-        Add category
-      </p>
-      <div className="space-y-2">
-        <p className="text-12 font-medium text-content-primary">Shared (everyone)</p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={sharedName}
-            onChange={e => setSharedName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddShared()}
-            placeholder="Category name"
-            className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-          />
-          <button
-            type="button"
-            onClick={handleAddShared}
-            className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
-          >
-            Add
-          </button>
-        </div>
-      </div>
-      <div className="space-y-2">
-        <p className="text-12 font-medium text-content-primary">Traveller (personal)</p>
-        <select
-          value={personMemberId}
-          onChange={e => {
-            const id = e.target.value
-            setPersonMemberId(id)
-            const m = travellers.find(x => x.id === id)
-            if (m) setPersonName(m.name)
+        <span className="flex-1 text-11 font-medium uppercase tracking-[0.08em] text-content-secondary">
+          Add category
+        </span>
+        <ChevronDown
+          size={18}
+          className="text-content-hint flex-shrink-0"
+          style={{
+            transition: 'transform 200ms ease',
+            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
           }}
-          className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-        >
-          <option value="">Select traveller…</option>
-          {travellers.map(m => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={personName}
-            onChange={e => setPersonName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddPerson()}
-            placeholder="Category title (optional)"
-            className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-          />
-          <button
-            type="button"
-            onClick={handleAddPerson}
-            className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
+        />
+      </button>
+      <div
+        style={{
+          display: 'grid',
+          transition: 'grid-template-rows 250ms ease',
+          gridTemplateRows: open ? '1fr' : '0fr',
+        }}
+      >
+        <div style={{ overflow: 'hidden' }}>
+          <div
+            className="px-3 pb-3 space-y-4 border-t border-[rgba(0,0,0,0.06)]"
+            style={{ backgroundColor: '#f8f7f4' }}
           >
-            Add
-          </button>
+            <div className="space-y-2 pt-3">
+              <p className="text-12 font-medium text-content-primary">Shared (everyone)</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={sharedName}
+                  onChange={e => setSharedName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddShared()}
+                  placeholder="Category name"
+                  className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddShared}
+                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-12 font-medium text-content-primary">Traveller (personal)</p>
+              <select
+                value={personMemberId}
+                onChange={e => {
+                  const id = e.target.value
+                  setPersonMemberId(id)
+                  const m = travellers.find(x => x.id === id)
+                  if (m) setPersonName(m.name)
+                }}
+                className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+              >
+                <option value="">Select traveller…</option>
+                {travellers.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={personName}
+                  onChange={e => setPersonName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddPerson()}
+                  placeholder="Category title (optional)"
+                  className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddPerson}
+                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -935,7 +964,7 @@ function SectionCard({
                 className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
               >
                 <option value="">
-                  {TEMPLATE_MISC_SUBCATEGORY} — default (bottom of section)
+                  {TEMPLATE_MISC_SECTION_NAME} category — default
                 </option>
                 {sortedSubs.map(sub => (
                   <option key={sub.id} value={sub.id}>

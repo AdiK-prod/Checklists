@@ -8,7 +8,7 @@ import {
   normalizeMember,
   buildAiSuggestionsFromSections,
 } from '../lib/transforms'
-import { ensureChecklistMiscSubcategory } from '../lib/checklistLayout'
+import { ensureChecklistMiscSectionBucket } from '../lib/checklistLayout'
 
 function updateItemInSections(sections, itemId, patch) {
   return sections.map(sec => ({
@@ -310,31 +310,77 @@ export function useTripDetail(tripId) {
 
       if (!subcategoryId) {
         try {
-          const { subcategoryId: miscId, created } = await ensureChecklistMiscSubcategory(supabase, sectionId)
+          const { subcategoryId: miscId, createdSection, createdSubcategory } =
+            await ensureChecklistMiscSectionBucket(supabase, tripId)
           subcategoryId = miscId
-          if (created) {
-            rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(created.id, created)
+
+          if (createdSection) {
+            rawSectionByIdRef.current = new Map(rawSectionByIdRef.current).set(
+              createdSection.id,
+              createdSection,
+            )
+          }
+          if (createdSubcategory) {
+            rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(
+              createdSubcategory.id,
+              createdSubcategory,
+            )
+          }
+
+          if (createdSection || createdSubcategory) {
             setTrip(prev => {
               if (!prev) return prev
-              const sections = prev.sections.map(sec => {
-                if (sec.id !== sectionId) return sec
-                const newSub = {
-                  id: created.id,
-                  name: created.name,
-                  sortOrder: created.sort_order,
-                  isManuallyAdded: created.is_manually_added,
-                  items: [],
-                }
-                const nextSubs = [...sec.subcategories, newSub].sort(
-                  (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
-                )
-                return { ...sec, subcategories: nextSubs }
-              })
-              return { ...prev, sections, aiSuggestions: prev.aiSuggestions }
+              let sections = [...prev.sections]
+
+              if (createdSection) {
+                const subs =
+                  createdSubcategory && createdSubcategory.section_id === createdSection.id
+                    ? [
+                        {
+                          id: createdSubcategory.id,
+                          name: createdSubcategory.name,
+                          sortOrder: createdSubcategory.sort_order,
+                          isManuallyAdded: createdSubcategory.is_manually_added,
+                          items: [],
+                        },
+                      ]
+                    : []
+                sections.push({
+                  id: createdSection.id,
+                  sectionType: createdSection.section_type,
+                  name: createdSection.name,
+                  memberId: createdSection.member_id,
+                  sortOrder: createdSection.sort_order,
+                  member: null,
+                  subcategories: subs,
+                })
+              } else if (createdSubcategory) {
+                sections = sections.map(sec => {
+                  if (sec.id !== createdSubcategory.section_id) return sec
+                  const newSub = {
+                    id: createdSubcategory.id,
+                    name: createdSubcategory.name,
+                    sortOrder: createdSubcategory.sort_order,
+                    isManuallyAdded: createdSubcategory.is_manually_added,
+                    items: [],
+                  }
+                  const nextSubs = [...sec.subcategories, newSub].sort(
+                    (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+                  )
+                  return { ...sec, subcategories: nextSubs }
+                })
+              }
+
+              sections.sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+              return {
+                ...prev,
+                sections,
+                aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+              }
             })
           }
         } catch (e) {
-          console.error('ensure Misc. subcategory:', e?.message, e)
+          console.error('ensure Misc. category bucket:', e?.message, e)
           return null
         }
       }

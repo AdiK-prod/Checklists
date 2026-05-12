@@ -1,33 +1,85 @@
-import { TEMPLATE_MISC_SUBCATEGORY, isMiscSubcategoryName } from './templateLayout'
+import {
+  TEMPLATE_MISC_SECTION_NAME,
+  DEFAULT_BUCKET_SUBCATEGORY_NAME,
+  isMiscSectionName,
+} from './templateLayout'
+
+function isDefaultBucketSubcategoryName(name) {
+  return (
+    String(name || '')
+      .trim()
+      .toLowerCase() === DEFAULT_BUCKET_SUBCATEGORY_NAME.toLowerCase()
+  )
+}
 
 /**
- * Ensures a checklist section has a bottom "Misc." subcategory (trip packing list).
- * @returns {{ subcategoryId: string, created: object | null }} created row when inserted (Supabase shape).
+ * Ensures a shared "Misc." category exists on the trip and returns its default "Items" subcategory.
+ * @returns {{ subcategoryId: string, createdSection: object | null, createdSubcategory: object | null }}
  */
-export async function ensureChecklistMiscSubcategory(client, sectionId) {
+export async function ensureChecklistMiscSectionBucket(client, tripId) {
+  const { data: sections, error: sErr } = await client
+    .from('checklist_sections')
+    .select('*')
+    .eq('trip_id', tripId)
+    .order('sort_order')
+
+  if (sErr) throw sErr
+
+  const list = sections || []
+  const sharedList = list.filter(s => s.section_type === 'shared')
+  let miscSec = sharedList.find(s => isMiscSectionName(s.name))
+  let createdSection = null
+
+  if (!miscSec) {
+    const maxSo = list.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+    const { data: ins, error: iErr } = await client
+      .from('checklist_sections')
+      .insert({
+        trip_id: tripId,
+        section_type: 'shared',
+        name: TEMPLATE_MISC_SECTION_NAME,
+        member_id: null,
+        sort_order: maxSo + 1,
+      })
+      .select()
+      .single()
+    if (iErr) throw iErr
+    miscSec = ins
+    createdSection = ins
+  }
+
   const { data: subs, error: subErr } = await client
     .from('checklist_subcategories')
-    .select('id, name, sort_order, section_id, is_manually_added')
-    .eq('section_id', sectionId)
+    .select('*')
+    .eq('section_id', miscSec.id)
     .order('sort_order')
 
   if (subErr) throw subErr
 
   const subList = subs || []
-  const existingMisc = subList.find(s => isMiscSubcategoryName(s.name))
-  if (existingMisc) return { subcategoryId: existingMisc.id, created: null }
+  let bucket = subList.find(s => isDefaultBucketSubcategoryName(s.name))
+  let createdSubcategory = null
 
-  const maxSo = subList.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-  const { data: newSub, error: insErr } = await client
-    .from('checklist_subcategories')
-    .insert({
-      section_id: sectionId,
-      name: TEMPLATE_MISC_SUBCATEGORY,
-      sort_order: maxSo + 1,
-      is_manually_added: true,
-    })
-    .select()
-    .single()
-  if (insErr) throw insErr
-  return { subcategoryId: newSub.id, created: newSub }
+  if (!bucket) {
+    const maxSub = subList.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+    const { data: ins, error: insErr } = await client
+      .from('checklist_subcategories')
+      .insert({
+        section_id: miscSec.id,
+        name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+        sort_order: maxSub + 1,
+        is_manually_added: true,
+      })
+      .select()
+      .single()
+    if (insErr) throw insErr
+    bucket = ins
+    createdSubcategory = ins
+  }
+
+  return {
+    subcategoryId: bucket.id,
+    createdSection,
+    createdSubcategory,
+  }
 }
