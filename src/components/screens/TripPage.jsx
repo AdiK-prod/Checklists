@@ -116,6 +116,7 @@ export default function TripPage() {
     updateSection,
     removeSection,
     renameChecklistSubcategory,
+    removeSubcategory,
   } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
