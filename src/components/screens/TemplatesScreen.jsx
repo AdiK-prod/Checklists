@@ -248,15 +248,17 @@ export default function TemplatesScreen() {
     }
     const sectionId = String(targetSectionId).trim()
     if (preferredSubcategoryId?.trim()) {
-      const sid = String(preferredSubcategoryId).trim()
-      const { data: row, error: vErr } = await supabase
-        .from('template_subcategories')
-        .select('id')
-        .eq('id', sid)
-        .eq('section_id', sectionId)
-        .maybeSingle()
-      if (vErr) throw vErr
-      if (row?.id) return row.id
+      const sid = String(preferredSubcategoryId).trim().replace(/^:+/, '')
+      if (sid) {
+        const { data: row, error: vErr } = await supabase
+          .from('template_subcategories')
+          .select('id')
+          .eq('id', sid)
+          .eq('section_id', sectionId)
+          .maybeSingle()
+        if (vErr) throw vErr
+        if (row?.id) return row.id
+      }
     }
 
     const { data: allSubs, error: qErr } = await supabase

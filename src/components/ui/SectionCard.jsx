@@ -503,7 +503,7 @@ export default function SectionCard({
       if (fromSlot === 'item-flat') {
         newId = await quickAddTripItem(section.id, undefined, trimmed)
       } else if (typeof fromSlot === 'string' && fromSlot.startsWith('itemT:')) {
-        const sid = fromSlot.slice(5)
+        const sid = fromSlot.slice('itemT:'.length)
         newId = await quickAddTripItem(section.id, sid, trimmed)
       }
     } else {
@@ -512,7 +512,7 @@ export default function SectionCard({
       if (fromSlot === 'item-flat') {
         newId = await quickAddTemplateItem(wt, section.id, undefined, trimmed)
       } else if (typeof fromSlot === 'string' && fromSlot.startsWith('itemT:')) {
-        const sid = fromSlot.slice(5)
+        const sid = fromSlot.slice('itemT:'.length)
         newId = await quickAddTemplateItem(wt, section.id, sid, trimmed)
       }
     }
