@@ -24,6 +24,7 @@ import {
   ensureTemplateHasMinimalTree,
   ensureTemplateMiscSectionDefaultSubcategory,
   DEFAULT_BUCKET_SUBCATEGORY_NAME,
+  isDefaultBucketSubcategoryName,
   isMiscSectionName,
 } from '../../lib/templateLayout'
 import { asArray } from '../../lib/transforms'
@@ -225,8 +226,11 @@ export default function TemplatesScreen() {
     const subs = [...asArray(sec?.template_subcategories)].sort(
       (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
     )
-    const first = subs[0]?.id
-    setAddTargetSubcategoryId(first != null ? String(first) : '')
+    setAddTargetSubcategoryId(prev => {
+      if (!prev) return ''
+      const ok = subs.some(s => String(s.id) === String(prev))
+      return ok ? prev : ''
+    })
   }, [openId, rows, addTargetSectionId])
 
   async function saveTemplateName(id) {
@@ -258,22 +262,26 @@ export default function TemplatesScreen() {
       if (row?.id) return row.id
     }
 
-    const { data: subList, error: qErr } = await supabase
+    const { data: allSubs, error: qErr } = await supabase
       .from('template_subcategories')
-      .select('id')
+      .select('id, name, sort_order')
       .eq('section_id', sectionId)
       .order('sort_order', { ascending: true })
-      .limit(1)
 
     if (qErr) throw qErr
-    if (subList?.length) return subList[0].id
+    const list = allSubs || []
+
+    const bucket = list.find(s => isDefaultBucketSubcategoryName(s.name))
+    if (bucket) return bucket.id
+
+    const maxSo = list.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
 
     const { data: newSub, error: insErr } = await supabase
       .from('template_subcategories')
       .insert({
         section_id: sectionId,
         name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
-        sort_order: 0,
+        sort_order: list.length === 0 ? 0 : maxSo + 1,
       })
       .select('id')
       .single()
@@ -285,11 +293,6 @@ export default function TemplatesScreen() {
   async function addItem(templateId) {
     const label = newLabel.trim()
     if (!label) return
-
-    if (addTargetSectionId?.trim() && !addTargetSubcategoryId?.trim()) {
-      alert('Choose a category for the selected section.')
-      return
-    }
 
     let subId
     try {
@@ -349,15 +352,6 @@ export default function TemplatesScreen() {
       alert(error.message)
       return
     }
-    const { error: subErr } = await supabase.from('template_subcategories').insert({
-      section_id: secRow.id,
-      name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
-      sort_order: 0,
-    })
-    if (subErr) {
-      alert(subErr.message)
-      return
-    }
     setNewSharedCatName('')
     await mergeTemplateRow(templateId)
   }
@@ -391,15 +385,6 @@ export default function TemplatesScreen() {
       .single()
     if (error) {
       alert(error.message)
-      return
-    }
-    const { error: subErr } = await supabase.from('template_subcategories').insert({
-      section_id: secRow.id,
-      name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
-      sort_order: 0,
-    })
-    if (subErr) {
-      alert(subErr.message)
       return
     }
     setNewPersonCatName('')
@@ -437,18 +422,6 @@ export default function TemplatesScreen() {
     if (error) {
       alert(error.message)
       return
-    }
-    const wasOnlyCategory = (sec.template_subcategories || []).length === 1
-    if (wasOnlyCategory) {
-      const { error: insErr } = await supabase.from('template_subcategories').insert({
-        section_id: sec.id,
-        name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
-        sort_order: 0,
-      })
-      if (insErr) {
-        alert(insErr.message)
-        return
-      }
     }
     await mergeTemplateRow(openId)
   }
@@ -1032,12 +1005,17 @@ export default function TemplatesScreen() {
                         </select>
                         {addTargetSectionId ? (
                           <>
-                            <label className="block text-11 text-content-secondary">Category</label>
+                            <label className="block text-11 text-content-secondary">
+                              Category (optional)
+                            </label>
                             <select
                               value={addTargetSubcategoryId}
                               onChange={e => setAddTargetSubcategoryId(e.target.value)}
                               className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                             >
+                              <option value="">
+                                Section default ({DEFAULT_BUCKET_SUBCATEGORY_NAME})
+                              </option>
                               {(() => {
                                 const tsec = (tpl.template_sections || []).find(
                                   s => String(s.id) === String(addTargetSectionId),

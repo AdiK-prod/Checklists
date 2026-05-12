@@ -14,7 +14,7 @@ export function isMiscSectionName(name) {
   return n === 'misc' || n === 'misc.'
 }
 
-function isDefaultBucketSubcategoryName(name) {
+export function isDefaultBucketSubcategoryName(name) {
   return String(name || '')
     .trim()
     .toLowerCase() === DEFAULT_BUCKET_SUBCATEGORY_NAME.toLowerCase()

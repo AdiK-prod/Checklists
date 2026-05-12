@@ -34,6 +34,7 @@ import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
 import { getSectionIconMeta } from '../../lib/sectionIcons'
+import { DEFAULT_BUCKET_SUBCATEGORY_NAME } from '../../lib/templateLayout'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -676,8 +677,11 @@ function SectionCard({
     const subs = [...(section.subcategories || [])].sort(
       (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
     )
-    const first = subs[0]?.id
-    setQuickTargetSubcategoryId(first ? String(first) : '')
+    setQuickTargetSubcategoryId(prev => {
+      if (!prev) return ''
+      const ok = subs.some(s => String(s.id) === String(prev))
+      return ok ? prev : ''
+    })
   }, [section.id, section.subcategories])
 
   const sortedSubs = useMemo(
@@ -948,13 +952,18 @@ function SectionCard({
               </div>
               {sortedSubs.length > 0 ? (
                 <div className="space-y-2">
-                  <label className="block text-11 text-content-secondary">Category</label>
+                  <label className="block text-11 text-content-secondary">
+                    Category (optional)
+                  </label>
                   <select
                     value={quickTargetSubcategoryId}
                     onChange={e => setQuickTargetSubcategoryId(e.target.value)}
                     aria-label="Category for new item"
                     className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
                   >
+                    <option value="">
+                      Section default ({DEFAULT_BUCKET_SUBCATEGORY_NAME})
+                    </option>
                     {sortedSubs.map(sub => (
                       <option key={sub.id} value={String(sub.id)}>
                         {sub.name}

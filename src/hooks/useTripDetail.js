@@ -10,7 +10,7 @@ import {
   buildAiSuggestionsFromSections,
 } from '../lib/transforms'
 import { ensureChecklistMiscSectionBucket } from '../lib/checklistLayout'
-import { DEFAULT_BUCKET_SUBCATEGORY_NAME } from '../lib/templateLayout'
+import { DEFAULT_BUCKET_SUBCATEGORY_NAME, isDefaultBucketSubcategoryName } from '../lib/templateLayout'
 
 function updateItemInSections(sections, itemId, patch) {
   return sections.map(sec => ({
@@ -241,7 +241,52 @@ export function useTripDetail(tripId) {
     const subs = [...rawSubByIdRef.current.values()]
       .filter(s => s.section_id === sectionId)
       .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
-    if (subs.length > 0) return subs[0].id
+
+    const bucket = subs.find(s => isDefaultBucketSubcategoryName(s.name))
+    if (bucket) return bucket.id
+
+    if (subs.length > 0) {
+      const maxSo = subs.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+      const { data: sr, error } = await supabase
+        .from('checklist_subcategories')
+        .insert({
+          section_id: sectionId,
+          name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
+          sort_order: maxSo + 1,
+          is_manually_added: true,
+        })
+        .select()
+        .single()
+      if (error) {
+        console.error(error)
+        throw error
+      }
+      rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(sr.id, sr)
+
+      setTrip(prev => {
+        if (!prev) return prev
+        const newSub = {
+          id: sr.id,
+          name: sr.name,
+          sortOrder: sr.sort_order,
+          isManuallyAdded: sr.is_manually_added,
+          items: [],
+        }
+        const sections = prev.sections.map(sec => {
+          if (sec.id !== sectionId) return sec
+          const nextSubs = [...sec.subcategories, newSub].sort(
+            (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+          )
+          return { ...sec, subcategories: nextSubs }
+        })
+        return {
+          ...prev,
+          sections,
+          aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+        }
+      })
+      return sr.id
+    }
 
     const { data: sr, error } = await supabase
       .from('checklist_subcategories')
@@ -847,25 +892,7 @@ export function useTripDetail(tripId) {
       }
       if (!data) return null
 
-      const { data: subRow, error: subInsErr } = await supabase
-        .from('checklist_subcategories')
-        .insert({
-          section_id: data.id,
-          name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
-          sort_order: 0,
-          is_manually_added: true,
-        })
-        .select()
-        .single()
-      if (subInsErr) {
-        console.error(subInsErr)
-        return null
-      }
-
       rawSectionByIdRef.current = new Map(rawSectionByIdRef.current).set(data.id, data)
-      if (subRow) {
-        rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(subRow.id, subRow)
-      }
 
       setTrip(prev => {
         if (!prev) return prev
@@ -873,15 +900,6 @@ export function useTripDetail(tripId) {
           sectionType === 'person' && memberId
             ? prev.members.find(m => m.id === memberId) || null
             : null
-        const defaultSub = subRow
-          ? {
-              id: subRow.id,
-              name: subRow.name,
-              sortOrder: subRow.sort_order,
-              isManuallyAdded: subRow.is_manually_added,
-              items: [],
-            }
-          : null
         const newSec = {
           id: data.id,
           sectionType: data.section_type,
@@ -889,7 +907,7 @@ export function useTripDetail(tripId) {
           memberId: data.member_id,
           sortOrder: data.sort_order,
           member,
-          subcategories: defaultSub ? [defaultSub] : [],
+          subcategories: [],
         }
         const sections = [...prev.sections, newSec].sort(
           (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),

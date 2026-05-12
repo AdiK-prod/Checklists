@@ -1,16 +1,9 @@
 import {
   TEMPLATE_MISC_SECTION_NAME,
   DEFAULT_BUCKET_SUBCATEGORY_NAME,
+  isDefaultBucketSubcategoryName,
   isMiscSectionName,
 } from './templateLayout'
-
-function isDefaultBucketSubcategoryName(name) {
-  return (
-    String(name || '')
-      .trim()
-      .toLowerCase() === DEFAULT_BUCKET_SUBCATEGORY_NAME.toLowerCase()
-  )
-}
 
 /**
  * Ensures a shared "Misc." category exists on the trip and returns its default group label row ("Items" in DB).
