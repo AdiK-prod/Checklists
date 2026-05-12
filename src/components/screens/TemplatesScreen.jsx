@@ -171,26 +171,31 @@ export default function TemplatesScreen() {
   }
 
   async function resolveTemplateItemBucketId(templateId, targetSectionId) {
-    if (!targetSectionId) {
+    if (!targetSectionId?.trim()) {
       return ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId)
     }
-    const tpl = rows.find(r => r.id === templateId)
-    const sec = tpl?.template_sections?.find(s => s.id === targetSectionId)
-    if (!sec) throw new Error('Category not found.')
-    const subs = [...(sec.template_subcategories || [])].sort(
-      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-    )
-    if (subs.length > 0) return subs[0].id
-    const { data: newSub, error } = await supabase
+    const sectionId = String(targetSectionId).trim()
+    const { data: subList, error: qErr } = await supabase
+      .from('template_subcategories')
+      .select('id')
+      .eq('section_id', sectionId)
+      .order('sort_order', { ascending: true })
+      .limit(1)
+
+    if (qErr) throw qErr
+    if (subList?.length) return subList[0].id
+
+    const { data: newSub, error: insErr } = await supabase
       .from('template_subcategories')
       .insert({
-        section_id: sec.id,
+        section_id: sectionId,
         name: DEFAULT_BUCKET_SUBCATEGORY_NAME,
         sort_order: 0,
       })
       .select('id')
       .single()
-    if (error) throw error
+
+    if (insErr) throw insErr
     return newSub.id
   }
 
@@ -200,23 +205,24 @@ export default function TemplatesScreen() {
 
     let subId
     try {
-      subId = await resolveTemplateItemBucketId(templateId, addTargetSectionId.trim())
+      subId = await resolveTemplateItemBucketId(templateId, addTargetSectionId)
     } catch (e) {
       alert(e?.message || 'Could not add item to the template.')
       return
     }
 
-    const tpl = rows.find(r => r.id === templateId)
-    let maxOrder = 0
-    outer: for (const sec of tpl?.template_sections || []) {
-      for (const sub of sec.template_subcategories || []) {
-        if (sub.id !== subId) continue
-        for (const it of sub.template_items || []) {
-          maxOrder = Math.max(maxOrder, it.sort_order ?? 0)
-        }
-        break outer
-      }
+    const { data: maxRows, error: maxErr } = await supabase
+      .from('template_items')
+      .select('sort_order')
+      .eq('subcategory_id', subId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+    if (maxErr) {
+      alert(maxErr.message)
+      return
     }
+    const maxOrder = maxRows?.[0]?.sort_order ?? 0
+
     const { error } = await supabase.from('template_items').insert({
       subcategory_id: subId,
       label,
@@ -645,7 +651,7 @@ export default function TemplatesScreen() {
                         >
                           <option value="">Misc. — add to bottom of shared items</option>
                           {subOpts.map(s => (
-                            <option key={s.id} value={s.id}>
+                            <option key={s.id} value={String(s.id)}>
                               {s.name}
                             </option>
                           ))}
