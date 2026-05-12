@@ -1,3 +1,9 @@
+/**
+ * Warms Supabase with a tiny read. Route stays deployed; the Vercel Cron schedule is off for now.
+ *
+ * To re-enable scheduled runs, merge into vercel.json next to "rewrites":
+ *   "crons": [{ "path": "/api/keepalive", "schedule": "*/5 * * * *" }]
+ */
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL

@@ -33,18 +33,18 @@ export async function seedTemplates(supabaseClient, householdId, members = []) {
         name: 'Documents',
         subcategories: [
           {
-            name: 'Travel docs',
+            name: 'Travel',
             items: [
-              'Passports (all family)',
+              'Passports',
               'Boarding passes',
               'Travel insurance',
-              'Hotel booking confirmation',
-              'EU Health Card (EHIC)',
+              'Hotel confirmation',
+              'EU Health Card',
             ],
           },
           {
             name: 'Finance',
-            items: ['Foreign currency / card', 'Travel wallet'],
+            items: ['Foreign currency', 'Travel wallet'],
           },
         ],
       },
@@ -61,22 +61,19 @@ export async function seedTemplates(supabaseClient, householdId, members = []) {
           },
         ],
       },
+      {
+        name: 'Misc.',
+        subcategories: [{ name: 'Items', items: [] }],
+      },
     ],
     personSubcategories: [
       {
         name: 'Clothing',
-        items: [
-          'Underwear (x nights)',
-          'T-shirts / tops',
-          'Bottoms',
-          'Sleepwear',
-          'Swimwear',
-          'Shoes / sandals',
-        ],
+        items: ['Underwear', 'T-shirts', 'Bottoms', 'Sleepwear', 'Swimwear', 'Shoes'],
       },
       {
         name: 'Toiletries',
-        items: ['Toothbrush + toothpaste', 'Shampoo / conditioner', 'Deodorant'],
+        items: ['Toothbrush + toothpaste', 'Shampoo', 'Deodorant'],
       },
       { name: 'Medications', items: [] },
     ],
@@ -93,6 +90,10 @@ export async function seedTemplates(supabaseClient, householdId, members = []) {
             items: ['Phone + charger', 'Snacks', 'Water bottles', 'Sunscreen', 'Cash / card'],
           },
         ],
+      },
+      {
+        name: 'Misc.',
+        subcategories: [{ name: 'Items', items: [] }],
       },
     ],
     personSubcategories: [
@@ -111,7 +112,7 @@ export async function seedTemplates(supabaseClient, householdId, members = []) {
         name: 'Documents',
         subcategories: [
           {
-            name: 'Travel docs',
+            name: 'Travel',
             items: ['ID / passport', 'Accommodation confirmation'],
           },
         ],
@@ -123,11 +124,15 @@ export async function seedTemplates(supabaseClient, householdId, members = []) {
           { name: 'Health', items: ['First aid kit'] },
         ],
       },
+      {
+        name: 'Misc.',
+        subcategories: [{ name: 'Items', items: [] }],
+      },
     ],
     personSubcategories: [
       {
         name: 'Clothing',
-        items: ['Underwear (x nights)', 'Casual outfits', 'Sleepwear', 'Shoes'],
+        items: ['Underwear', 'Casual outfits', 'Sleepwear', 'Shoes'],
       },
       {
         name: 'Toiletries',

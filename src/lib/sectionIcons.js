@@ -8,8 +8,8 @@ import {
   Shirt,
 } from 'lucide-react'
 
-/** Visual metadata for shared category (DB: checklist_sections) headers. Match on first word of name, case-insensitive. */
-const SHARED_CATEGORY_ICONS = {
+/** Header icon map for shared sections (DB: checklist_sections / template_sections). Match on first word of name, case-insensitive. */
+export const SECTION_ICONS = {
   documents: { icon: FileText, bg: '#E6F1FB', color: '#185FA5' },
   essentials: { icon: ShoppingBag, bg: '#E1F5EE', color: '#0F6E56' },
   misc: { icon: FolderOpen, bg: '#f1efe8', color: '#6b6b6b' },
@@ -27,7 +27,7 @@ function firstWordKey(name) {
   return raw.replace(/[^a-z0-9]/gi, '').toLowerCase()
 }
 
-export function getSharedCategoryIconMeta(name) {
+export function getSectionIconMeta(name) {
   const key = firstWordKey(name)
-  return SHARED_CATEGORY_ICONS[key] || SHARED_CATEGORY_ICONS.default
+  return SECTION_ICONS[key] || SECTION_ICONS.default
 }

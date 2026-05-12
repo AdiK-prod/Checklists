@@ -348,6 +348,58 @@ export function useTripDetail(tripId) {
     [insertChecklistItem],
   )
 
+  const addChecklistCategory = useCallback(async (sectionId, name) => {
+    const trimmed = String(name || '').trim()
+    if (!trimmed || !sectionId || !tripId) return null
+
+    const subs = [...rawSubByIdRef.current.values()].filter(s => s.section_id === sectionId)
+    const maxSo = subs.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+
+    const { data: sr, error } = await supabase
+      .from('checklist_subcategories')
+      .insert({
+        section_id: sectionId,
+        name: trimmed,
+        sort_order: maxSo + 1,
+        is_manually_added: true,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error(error)
+      return null
+    }
+    if (!sr) return null
+
+    rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(sr.id, sr)
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(sec => {
+        if (sec.id !== sectionId) return sec
+        const newSub = {
+          id: sr.id,
+          name: sr.name,
+          sortOrder: sr.sort_order,
+          isManuallyAdded: sr.is_manually_added,
+          items: [],
+        }
+        const nextSubs = [...sec.subcategories, newSub].sort(
+          (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+        )
+        return { ...sec, subcategories: nextSubs }
+      })
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+
+    return sr.id
+  }, [tripId])
+
   const addItemToSection = useCallback(
     async (targetSectionId, label) => {
       if (!tripId) return null
@@ -446,8 +498,18 @@ export function useTripDetail(tripId) {
   )
 
   const quickAddItem = useCallback(
-    async (targetSectionId, label) => addItemToSection(targetSectionId, label),
-    [addItemToSection],
+    async (payload, label) => {
+      const trimmed = String(label || '').trim()
+      if (!trimmed) return null
+      if (!payload || payload.mode === 'misc') {
+        return addItemToSection(null, trimmed)
+      }
+      if (payload.mode === 'category' && payload.subcategoryId) {
+        return insertChecklistItem(payload.subcategoryId, trimmed)
+      }
+      return null
+    },
+    [addItemToSection, insertChecklistItem],
   )
 
   const removeChecklistItem = useCallback(async itemId => {
@@ -750,6 +812,7 @@ export function useTripDetail(tripId) {
     rebuildChecklist,
     addStarterChecklist,
     addSection,
+    addChecklistCategory,
     updateSection,
     removeSection,
   }

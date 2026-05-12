@@ -54,6 +54,7 @@ export default function TemplatesScreen() {
   const [openId, setOpenId] = useState(null)
   const [newLabel, setNewLabel] = useState('')
   const [addTargetSectionId, setAddTargetSectionId] = useState('')
+  const [addTargetSubcategoryId, setAddTargetSubcategoryId] = useState('')
   const [editingNameId, setEditingNameId] = useState(null)
   const [editNameValue, setEditNameValue] = useState('')
   const [members, setMembers] = useState([])
@@ -63,6 +64,7 @@ export default function TemplatesScreen() {
   const [newPersonMemberId, setNewPersonMemberId] = useState('')
   const [newPersonCatName, setNewPersonCatName] = useState('')
   const [addCategoryOpen, setAddCategoryOpen] = useState(false)
+  const [tplCategoryDraftBySection, setTplCategoryDraftBySection] = useState({})
 
   const load = useCallback(async () => {
     if (!household?.id) {
@@ -129,6 +131,8 @@ export default function TemplatesScreen() {
 
   useEffect(() => {
     setAddTargetSectionId('')
+    setAddTargetSubcategoryId('')
+    setTplCategoryDraftBySection({})
     setNewSharedCatName('')
     setNewPersonMemberId('')
     setNewPersonCatName('')
@@ -158,6 +162,20 @@ export default function TemplatesScreen() {
     }
   }, [openId, rows, household?.id, load])
 
+  useEffect(() => {
+    if (!openId || !addTargetSectionId) {
+      setAddTargetSubcategoryId('')
+      return
+    }
+    const tpl = rows.find(r => r.id === openId)
+    const sec = tpl?.template_sections?.find(s => String(s.id) === String(addTargetSectionId))
+    const subs = [...asArray(sec?.template_subcategories)].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    )
+    const first = subs[0]?.id
+    setAddTargetSubcategoryId(first != null ? String(first) : '')
+  }, [openId, rows, addTargetSectionId])
+
   async function saveTemplateName(id) {
     const name = editNameValue.trim()
     if (!name) return
@@ -170,11 +188,23 @@ export default function TemplatesScreen() {
     await load()
   }
 
-  async function resolveTemplateItemBucketId(templateId, targetSectionId) {
+  async function resolveTemplateItemBucketId(templateId, targetSectionId, preferredSubcategoryId) {
     if (!targetSectionId?.trim()) {
       return ensureTemplateMiscSectionDefaultSubcategory(supabase, templateId)
     }
     const sectionId = String(targetSectionId).trim()
+    if (preferredSubcategoryId?.trim()) {
+      const sid = String(preferredSubcategoryId).trim()
+      const { data: row, error: vErr } = await supabase
+        .from('template_subcategories')
+        .select('id')
+        .eq('id', sid)
+        .eq('section_id', sectionId)
+        .maybeSingle()
+      if (vErr) throw vErr
+      if (row?.id) return row.id
+    }
+
     const { data: subList, error: qErr } = await supabase
       .from('template_subcategories')
       .select('id')
@@ -203,9 +233,18 @@ export default function TemplatesScreen() {
     const label = newLabel.trim()
     if (!label) return
 
+    if (addTargetSectionId?.trim() && !addTargetSubcategoryId?.trim()) {
+      alert('Choose a category for the selected section.')
+      return
+    }
+
     let subId
     try {
-      subId = await resolveTemplateItemBucketId(templateId, addTargetSectionId)
+      subId = await resolveTemplateItemBucketId(
+        templateId,
+        addTargetSectionId,
+        addTargetSubcategoryId,
+      )
     } catch (e) {
       alert(e?.message || 'Could not add item to the template.')
       return
@@ -281,7 +320,7 @@ export default function TemplatesScreen() {
       newPersonCatName.trim() || members.find(m => m.id === memberId)?.name || ''
     if (!name) return
     if (tpl?.template_sections?.some(s => s.section_type === 'person' && s.member_id === memberId)) {
-      alert('This person already has a category in this template.')
+      alert('This person already has a section in this template.')
       return
     }
     const secs = tpl?.template_sections || []
@@ -329,12 +368,32 @@ export default function TemplatesScreen() {
 
   async function removeTemplateSection(sec) {
     const n = countTemplateSectionItems(sec)
-    if (!window.confirm(`Remove category "${sec.name}" and all ${n} items inside?`)) return
+    if (!window.confirm(`Remove section "${sec.name}" and all items inside (${n} total)?`)) return
     const { error } = await supabase.from('template_sections').delete().eq('id', sec.id)
     if (error) {
       alert(error.message)
       return
     }
+    await load()
+  }
+
+  async function addTemplateCategoryRow(sectionId, templateId) {
+    const name = (tplCategoryDraftBySection[sectionId] || '').trim()
+    if (!name) return
+    const tpl = rows.find(r => r.id === templateId)
+    const sec = tpl?.template_sections?.find(s => s.id === sectionId)
+    const subs = asArray(sec?.template_subcategories)
+    const maxSo = subs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { error } = await supabase.from('template_subcategories').insert({
+      section_id: sectionId,
+      name,
+      sort_order: maxSo + 1,
+    })
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setTplCategoryDraftBySection(prev => ({ ...prev, [sectionId]: '' }))
     await load()
   }
 
@@ -366,8 +425,8 @@ export default function TemplatesScreen() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pb-8">
         <p className="text-12 text-content-secondary mb-4">
-          Categories are the top level of each template (shared groups and one card per traveller). Lines are
-          grouped inside each category. Trips copy this structure when you create them.
+          Sections are the top level of each template (shared groups and one card per traveller). Category labels
+          group items inside each section. Trips copy this structure when you create them.
         </p>
 
         {loading ? (
@@ -532,6 +591,30 @@ export default function TemplatesScreen() {
                             </div>
                           ))}
 
+                          <div className="flex gap-2 items-center pt-1">
+                            <input
+                              value={tplCategoryDraftBySection[sec.id] || ''}
+                              onChange={e =>
+                                setTplCategoryDraftBySection(prev => ({
+                                  ...prev,
+                                  [sec.id]: e.target.value,
+                                }))
+                              }
+                              onKeyDown={e =>
+                                e.key === 'Enter' && addTemplateCategoryRow(sec.id, tpl.id)
+                              }
+                              placeholder="New category label"
+                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addTemplateCategoryRow(sec.id, tpl.id)}
+                              className="text-12 font-medium text-navy bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 whitespace-nowrap"
+                            >
+                              + Add category
+                            </button>
+                          </div>
+
                         </div>
                       ))}
 
@@ -546,7 +629,7 @@ export default function TemplatesScreen() {
                           className="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-page"
                         >
                           <span className="flex-1 text-11 font-medium uppercase tracking-[0.08em] text-content-secondary">
-                            Add category
+                            Add section
                           </span>
                           <ChevronDown
                             size={18}
@@ -567,7 +650,7 @@ export default function TemplatesScreen() {
                           <div style={{ overflow: 'hidden' }}>
                             <div className="px-3 pb-3 pt-1 space-y-3 border-t border-[rgba(0,0,0,0.06)]">
                               <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Shared category</p>
+                                <p className="text-12 text-content-primary">Shared section</p>
                                 <div className="flex gap-2">
                                   <input
                                     value={newSharedCatName}
@@ -575,7 +658,7 @@ export default function TemplatesScreen() {
                                     onKeyDown={e =>
                                       e.key === 'Enter' && addTemplateSharedCategory(tpl.id)
                                     }
-                                    placeholder="Category name (e.g. Documents, Health)"
+                                    placeholder="Section name (e.g. Documents, Health)"
                                     className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
                                   />
                                   <button
@@ -588,7 +671,7 @@ export default function TemplatesScreen() {
                                 </div>
                               </div>
                               <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Traveller category</p>
+                                <p className="text-12 text-content-primary">Person section</p>
                                 <select
                                   value={newPersonMemberId}
                                   onChange={e => {
@@ -643,7 +726,7 @@ export default function TemplatesScreen() {
                           placeholder="New item"
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         />
-                        <label className="block text-11 text-content-secondary">Add to (optional)</label>
+                        <label className="block text-11 text-content-secondary">Section</label>
                         <select
                           value={addTargetSectionId}
                           onChange={e => setAddTargetSectionId(e.target.value)}
@@ -656,6 +739,29 @@ export default function TemplatesScreen() {
                             </option>
                           ))}
                         </select>
+                        {addTargetSectionId ? (
+                          <>
+                            <label className="block text-11 text-content-secondary">Category</label>
+                            <select
+                              value={addTargetSubcategoryId}
+                              onChange={e => setAddTargetSubcategoryId(e.target.value)}
+                              className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
+                            >
+                              {(() => {
+                                const tsec = (tpl.template_sections || []).find(
+                                  s => String(s.id) === String(addTargetSectionId),
+                                )
+                                return [...asArray(tsec?.template_subcategories)]
+                                  .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                                  .map(s => (
+                                    <option key={s.id} value={String(s.id)}>
+                                      {s.name}
+                                    </option>
+                                  ))
+                              })()}
+                            </select>
+                          </>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => addItem(tpl.id)}

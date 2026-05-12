@@ -33,7 +33,7 @@ import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
 import { isMiscSectionName } from '../../lib/templateLayout'
-import { getSharedCategoryIconMeta } from '../../lib/sharedCategoryIcons'
+import { getSectionIconMeta } from '../../lib/sectionIcons'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -117,6 +117,7 @@ export default function TripPage() {
     error,
     toggleItem,
     quickAddItem,
+    addChecklistCategory,
     removeChecklistItem,
     saveToTemplate,
     reorderItems,
@@ -503,9 +504,11 @@ export default function TripPage() {
               section={sec}
               variant="shared"
               templateId={trip.templateId}
-              quickAddDropdownSections={quickAddDropdownSections}
+              tripSections={trip.sections || []}
+              sectionOptionsForQuickAdd={quickAddDropdownSections}
               onToggleItem={toggleItem}
               quickAddItem={quickAddItem}
+              onAddCategory={addChecklistCategory}
               removeChecklistItem={removeChecklistItem}
               onSaveToTemplate={saveToTemplate}
               onUpdateSection={updateSection}
@@ -520,9 +523,11 @@ export default function TripPage() {
               section={sec}
               variant="person"
               templateId={trip.templateId}
-              quickAddDropdownSections={quickAddDropdownSections}
+              tripSections={trip.sections || []}
+              sectionOptionsForQuickAdd={quickAddDropdownSections}
               onToggleItem={toggleItem}
               quickAddItem={quickAddItem}
+              onAddCategory={addChecklistCategory}
               removeChecklistItem={removeChecklistItem}
               onSaveToTemplate={saveToTemplate}
               onUpdateSection={updateSection}
@@ -567,7 +572,7 @@ function TripAddCategoryPanel({ trip, addSection }) {
     if (!name) return
     const id = await addSection({ sectionType: 'person', name, memberId: personMemberId })
     if (!id) {
-      window.alert('This traveller already has a category on this trip.')
+      window.alert('This traveller already has a section on this trip.')
       return
     }
     setPersonName('')
@@ -586,7 +591,7 @@ function TripAddCategoryPanel({ trip, addSection }) {
         className="w-full flex items-center gap-2 px-3 py-3 text-left"
       >
         <span className="flex-1 text-11 font-medium uppercase tracking-[0.08em] text-content-secondary">
-          Add category
+          Add section
         </span>
         <ChevronDown
           size={18}
@@ -610,14 +615,14 @@ function TripAddCategoryPanel({ trip, addSection }) {
             style={{ backgroundColor: '#f8f7f4' }}
           >
             <div className="space-y-2 pt-3">
-              <p className="text-12 font-medium text-content-primary">Shared category</p>
+              <p className="text-12 font-medium text-content-primary">Shared section</p>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={sharedName}
                   onChange={e => setSharedName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddShared()}
-                  placeholder="Category name (e.g. Documents, Health)"
+                  placeholder="Section name (e.g. Documents, Health)"
                   className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
                 />
                 <button
@@ -630,7 +635,7 @@ function TripAddCategoryPanel({ trip, addSection }) {
               </div>
             </div>
             <div className="space-y-2">
-              <p className="text-12 font-medium text-content-primary">Traveller category</p>
+              <p className="text-12 font-medium text-content-primary">Person section</p>
               <select
                 value={personMemberId}
                 onChange={e => {
@@ -678,9 +683,11 @@ function SectionCard({
   section,
   variant,
   templateId,
-  quickAddDropdownSections,
+  tripSections,
+  sectionOptionsForQuickAdd,
   onToggleItem,
   quickAddItem,
+  onAddCategory,
   removeChecklistItem,
   onSaveToTemplate,
   onUpdateSection,
@@ -691,12 +698,27 @@ function SectionCard({
   const [saveErrors, setSaveErrors] = useState({})
   const [quickLabel, setQuickLabel] = useState('')
   const [quickTargetSectionId, setQuickTargetSectionId] = useState('')
+  const [quickTargetSubcategoryId, setQuickTargetSubcategoryId] = useState('')
   const [nameEditOpen, setNameEditOpen] = useState(false)
   const [nameDraft, setNameDraft] = useState(section.name)
+  const [addCategoryDraft, setAddCategoryDraft] = useState('')
 
   useEffect(() => {
     setNameDraft(section.name)
   }, [section.name])
+
+  useEffect(() => {
+    if (!quickTargetSectionId) {
+      setQuickTargetSubcategoryId('')
+      return
+    }
+    const sec = tripSections.find(s => s.id === quickTargetSectionId)
+    const subs = [...(sec?.subcategories || [])].sort(
+      (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+    )
+    const first = subs[0]?.id
+    setQuickTargetSubcategoryId(first ? String(first) : '')
+  }, [quickTargetSectionId, tripSections])
 
   const sortedSubs = useMemo(
     () =>
@@ -708,7 +730,7 @@ function SectionCard({
 
   const { total: secTotal, checked: secChecked } = sectionItemTotals(section)
 
-  const iconMeta = variant === 'shared' ? getSharedCategoryIconMeta(section.name) : null
+  const iconMeta = variant === 'shared' ? getSectionIconMeta(section.name) : null
   const SharedIc = iconMeta?.icon
   const displayMember = variant === 'person' ? memberForPersonSection(section) : null
 
@@ -724,10 +746,30 @@ function SectionCard({
   const handleQuickAdd = async () => {
     const label = quickLabel.trim()
     if (!label) return
-    setQuickLabel('')
-    const target = quickTargetSectionId.trim() ? quickTargetSectionId : null
-    const newId = await quickAddItem(target, label)
-    if (newId) setNewItemIds(prev => new Set([...prev, newId]))
+    let newId
+    if (!quickTargetSectionId) {
+      newId = await quickAddItem({ mode: 'misc' }, label)
+    } else {
+      if (!quickTargetSubcategoryId) {
+        window.alert('Choose a category for the selected section.')
+        return
+      }
+      newId = await quickAddItem(
+        { mode: 'category', subcategoryId: quickTargetSubcategoryId },
+        label,
+      )
+    }
+    if (newId) {
+      setQuickLabel('')
+      setNewItemIds(prev => new Set([...prev, newId]))
+    }
+  }
+
+  const handleInlineAddCategory = async () => {
+    const name = addCategoryDraft.trim()
+    if (!name) return
+    const id = await onAddCategory(section.id, name)
+    if (id) setAddCategoryDraft('')
   }
 
   const handleSaveRename = async () => {
@@ -737,7 +779,7 @@ function SectionCard({
       await onUpdateSection(section.id, n)
       setNameEditOpen(false)
     } catch {
-      window.alert('Could not rename category.')
+      window.alert('Could not rename section.')
     }
   }
 
@@ -745,7 +787,7 @@ function SectionCard({
     const { total } = sectionItemTotals(section)
     if (
       !window.confirm(
-        `Remove category "${section.name}" and everything inside (${total} item${total !== 1 ? 's' : ''})?`,
+        `Remove section "${section.name}" and everything inside (${total} item${total !== 1 ? 's' : ''})?`,
       )
     ) {
       return
@@ -753,7 +795,7 @@ function SectionCard({
     try {
       await onRemoveSection(section.id)
     } catch {
-      window.alert('Could not remove category.')
+      window.alert('Could not remove section.')
     }
   }
 
@@ -877,6 +919,24 @@ function SectionCard({
               />
             ))}
 
+            <div className="flex gap-2 items-center pt-1">
+              <input
+                type="text"
+                value={addCategoryDraft}
+                onChange={e => setAddCategoryDraft(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleInlineAddCategory()}
+                placeholder="New category label"
+                className="flex-1 text-13 text-content-primary rounded-input px-3 py-2 bg-white focus:outline-none border border-[#e0ddd8]"
+              />
+              <button
+                type="button"
+                onClick={handleInlineAddCategory}
+                className="text-12 font-medium text-navy bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 whitespace-nowrap"
+              >
+                + Add category
+              </button>
+            </div>
+
             <div className="pt-2 border-t border-[rgba(0,0,0,0.06)] space-y-2">
               <div className="flex gap-2">
                 <input
@@ -896,22 +956,42 @@ function SectionCard({
                   + Add
                 </button>
               </div>
-              <div>
-                <label className="block text-11 text-content-secondary mb-1">Add to (optional)</label>
+              <div className="space-y-2">
+                <label className="block text-11 text-content-secondary">Section</label>
                 <select
                   value={quickTargetSectionId}
                   onChange={e => setQuickTargetSectionId(e.target.value)}
-                  aria-label="Add item to category"
+                  aria-label="Section for new item"
                   className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
                 >
                   <option value="">Misc. — default</option>
-                  {quickAddDropdownSections.map(s => (
+                  {sectionOptionsForQuickAdd.map(s => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
                   ))}
                 </select>
               </div>
+              {quickTargetSectionId ? (
+                <div className="space-y-2">
+                  <label className="block text-11 text-content-secondary">Category</label>
+                  <select
+                    value={quickTargetSubcategoryId}
+                    onChange={e => setQuickTargetSubcategoryId(e.target.value)}
+                    aria-label="Category for new item"
+                    className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                  >
+                    {(tripSections.find(s => s.id === quickTargetSectionId)?.subcategories || [])
+                      .slice()
+                      .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+                      .map(sub => (
+                        <option key={sub.id} value={String(sub.id)}>
+                          {sub.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
