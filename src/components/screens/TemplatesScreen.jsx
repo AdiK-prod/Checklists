@@ -7,6 +7,7 @@ import {
   useSensors,
   KeyboardSensor,
   closestCenter,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -16,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ArrowLeft, ChevronDown, ChevronUp, GripVertical, Plus, Plane, Car, Moon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, GripVertical, Plus, Plane, Car, Moon, X } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
@@ -28,6 +29,17 @@ import {
 import { asArray } from '../../lib/transforms'
 
 const ICON_MAP = { Plane, Car, Moon }
+
+const TEMPLATE_DETAIL_SELECT = `
+  id, name, icon,
+  template_sections(
+    id, section_type, name, member_id, sort_order,
+    template_subcategories(
+      id, name, sort_order,
+      template_items(id, label, sort_order)
+    )
+  )
+`
 
 function normalizeTemplateRow(t) {
   const secs = [...asArray(t.template_sections)]
@@ -81,6 +93,7 @@ export default function TemplatesScreen() {
   const [newPersonCatName, setNewPersonCatName] = useState('')
   const [addCategoryOpen, setAddCategoryOpen] = useState(false)
   const [tplCategoryDraftBySection, setTplCategoryDraftBySection] = useState({})
+  const [tplAddCategoryOpenSectionId, setTplAddCategoryOpenSectionId] = useState(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -122,6 +135,24 @@ export default function TemplatesScreen() {
     setLoading(false)
   }, [household?.id])
 
+  const mergeTemplateRow = useCallback(
+    async templateId => {
+      if (!household?.id || !templateId) return
+      const { data, error } = await supabase
+        .from('templates')
+        .select(TEMPLATE_DETAIL_SELECT)
+        .eq('id', templateId)
+        .eq('household_id', household.id)
+        .maybeSingle()
+      if (error) {
+        alert(error.message)
+        return
+      }
+      if (data) setRows(prev => prev.map(r => (r.id === templateId ? normalizeTemplateRow(data) : r)))
+    },
+    [household?.id],
+  )
+
   useEffect(() => {
     load()
   }, [load])
@@ -160,6 +191,7 @@ export default function TemplatesScreen() {
     setEditingTplSectionId(null)
     setTplSectionEditName('')
     setAddCategoryOpen(false)
+    setTplAddCategoryOpenSectionId(null)
   }, [openId])
 
   useEffect(() => {
@@ -173,7 +205,7 @@ export default function TemplatesScreen() {
     ;(async () => {
       try {
         const created = await ensureTemplateHasMinimalTree(supabase, openId)
-        if (!cancelled && created) await load()
+        if (!cancelled && created) await mergeTemplateRow(openId)
       } catch (e) {
         if (!cancelled) alert(e?.message || 'Could not prepare template.')
       }
@@ -181,7 +213,7 @@ export default function TemplatesScreen() {
     return () => {
       cancelled = true
     }
-  }, [openId, rows, household?.id, load])
+  }, [openId, rows, household?.id, mergeTemplateRow])
 
   useEffect(() => {
     if (!openId || !addTargetSectionId) {
@@ -206,7 +238,7 @@ export default function TemplatesScreen() {
       return
     }
     setEditingNameId(null)
-    await load()
+    await mergeTemplateRow(id)
   }
 
   async function resolveTemplateItemBucketId(templateId, targetSectionId, preferredSubcategoryId) {
@@ -293,7 +325,7 @@ export default function TemplatesScreen() {
       return
     }
     setNewLabel('')
-    await load()
+    await mergeTemplateRow(templateId)
   }
 
   async function addTemplateSharedCategory(templateId) {
@@ -327,7 +359,7 @@ export default function TemplatesScreen() {
       return
     }
     setNewSharedCatName('')
-    await load()
+    await mergeTemplateRow(templateId)
   }
 
   async function addTemplatePersonCategory(templateId) {
@@ -372,7 +404,7 @@ export default function TemplatesScreen() {
     }
     setNewPersonCatName('')
     setNewPersonMemberId('')
-    await load()
+    await mergeTemplateRow(templateId)
   }
 
   async function saveTplSectionName(sectionId) {
@@ -384,7 +416,7 @@ export default function TemplatesScreen() {
       return
     }
     setEditingTplSectionId(null)
-    await load()
+    await mergeTemplateRow(openId)
   }
 
   async function removeTemplateSection(sec) {
@@ -395,7 +427,7 @@ export default function TemplatesScreen() {
       alert(error.message)
       return
     }
-    await load()
+    await mergeTemplateRow(openId)
   }
 
   async function removeTemplateCategory(sub, sec) {
@@ -418,7 +450,7 @@ export default function TemplatesScreen() {
         return
       }
     }
-    await load()
+    await mergeTemplateRow(openId)
   }
 
   async function removeTemplateItem(itemId) {
@@ -427,11 +459,11 @@ export default function TemplatesScreen() {
       alert(error.message)
       return
     }
-    await load()
+    await mergeTemplateRow(openId)
   }
 
-  async function reorderTemplateItems(subcategoryId, orderedIds) {
-    if (!orderedIds.length) return
+  const reorderTemplateItems = useCallback(async (_subcategoryId, orderedIds, templateId) => {
+    if (!orderedIds.length || !templateId) return
     const results = await Promise.all(
       orderedIds.map((id, idx) =>
         supabase.from('template_items').update({ sort_order: (idx + 1) * 10 }).eq('id', id),
@@ -442,33 +474,130 @@ export default function TemplatesScreen() {
       alert(failed.error.message)
       return
     }
-    await load()
-  }
+    await mergeTemplateRow(templateId)
+  }, [mergeTemplateRow])
 
-  function handleTemplateDragEnd(tpl, event) {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const activeId = active.id
-    let subId = null
-    let ids = []
-    outer: for (const sec of tpl.template_sections || []) {
+  const sortTemplateItemIdsForSub = useCallback((tpl, subId) => {
+    const sid = String(subId)
+    for (const sec of tpl.template_sections || []) {
+      for (const sub of sec.template_subcategories || []) {
+        if (String(sub.id) !== sid) continue
+        return [...asArray(sub.template_items)]
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map(i => i.id)
+      }
+    }
+    return []
+  }, [])
+
+  const findTemplateItemSubcategoryId = useCallback((tpl, itemId) => {
+    const iid = String(itemId)
+    for (const sec of tpl.template_sections || []) {
       for (const sub of sec.template_subcategories || []) {
         const sorted = [...asArray(sub.template_items)].sort(
           (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
         )
-        const rowIds = sorted.map(i => i.id)
-        if (rowIds.includes(activeId)) {
-          subId = sub.id
-          ids = rowIds
-          break outer
-        }
+        if (sorted.some(it => String(it.id) === iid)) return sub.id
       }
     }
-    if (!subId) return
-    const oldIndex = ids.indexOf(active.id)
-    const newIndex = ids.indexOf(over.id)
-    if (oldIndex < 0 || newIndex < 0) return
-    reorderTemplateItems(subId, arrayMove(ids, oldIndex, newIndex))
+    return null
+  }, [])
+
+  const moveTemplateItem = useCallback(
+    async (tpl, activeId, overId) => {
+      const templateId = tpl.id
+      const aid = String(activeId)
+      const oid = String(overId)
+      if (aid === oid) return
+
+      const sourceSubId = findTemplateItemSubcategoryId(tpl, aid)
+      if (sourceSubId == null) return
+
+      const sortIdsForSub = sid => sortTemplateItemIdsForSub(tpl, sid)
+
+      let targetSubId
+      let insertMode
+      if (oid.startsWith('drop-end:')) {
+        targetSubId = oid.slice('drop-end:'.length)
+        insertMode = 'append'
+      } else if (oid.startsWith('drop:')) {
+        targetSubId = oid.slice('drop:'.length)
+        insertMode = 'empty'
+      } else {
+        const overSub = findTemplateItemSubcategoryId(tpl, oid)
+        if (overSub == null) return
+        targetSubId = overSub
+        insertMode = 'before_item'
+      }
+
+      const sourceSubStr = String(sourceSubId)
+      const targetSubStr = String(targetSubId)
+
+      if (sourceSubStr === targetSubStr) {
+        if (insertMode === 'append') {
+          const ids = sortIdsForSub(sourceSubId)
+          const oldIndex = ids.findIndex(id => String(id) === aid)
+          if (oldIndex < 0) return
+          const newIds = [...ids.filter(id => String(id) !== aid), aid]
+          await reorderTemplateItems(sourceSubId, newIds, templateId)
+          return
+        }
+        if (insertMode === 'empty') return
+        const ids = sortIdsForSub(sourceSubId)
+        const oldIndex = ids.findIndex(id => String(id) === aid)
+        const newIndex = ids.findIndex(id => String(id) === oid)
+        if (oldIndex < 0 || newIndex < 0) return
+        await reorderTemplateItems(sourceSubId, arrayMove(ids, oldIndex, newIndex), templateId)
+        return
+      }
+
+      const sourceIds = sortIdsForSub(sourceSubId).filter(id => String(id) !== aid)
+      let targetIds = sortIdsForSub(targetSubId).filter(id => String(id) !== aid)
+
+      let insertIndex
+      if (insertMode === 'append') {
+        insertIndex = targetIds.length
+      } else if (insertMode === 'empty') {
+        insertIndex = 0
+      } else {
+        insertIndex = targetIds.findIndex(id => String(id) === oid)
+        if (insertIndex < 0) insertIndex = targetIds.length
+      }
+
+      const newTargetIds = [...targetIds.slice(0, insertIndex), aid, ...targetIds.slice(insertIndex)]
+
+      const updates = []
+      for (let i = 0; i < sourceIds.length; i++) {
+        updates.push(
+          supabase
+            .from('template_items')
+            .update({ sort_order: (i + 1) * 10, subcategory_id: sourceSubId })
+            .eq('id', sourceIds[i]),
+        )
+      }
+      for (let i = 0; i < newTargetIds.length; i++) {
+        updates.push(
+          supabase
+            .from('template_items')
+            .update({ sort_order: (i + 1) * 10, subcategory_id: targetSubId })
+            .eq('id', newTargetIds[i]),
+        )
+      }
+      const results = await Promise.all(updates)
+      const failed = results.find(r => r.error)
+      if (failed?.error) {
+        alert(failed.error.message)
+        return
+      }
+      await mergeTemplateRow(templateId)
+    },
+    [findTemplateItemSubcategoryId, mergeTemplateRow, reorderTemplateItems, sortTemplateItemIdsForSub],
+  )
+
+  function handleTemplateDragEnd(tpl, event) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    moveTemplateItem(tpl, active.id, over.id)
   }
 
   async function addTemplateCategoryRow(sectionId, templateId) {
@@ -488,7 +617,8 @@ export default function TemplatesScreen() {
       return
     }
     setTplCategoryDraftBySection(prev => ({ ...prev, [sectionId]: '' }))
-    await load()
+    setTplAddCategoryOpenSectionId(null)
+    await mergeTemplateRow(templateId)
   }
 
   function templateCategoryTargets(tpl) {
@@ -691,47 +821,89 @@ export default function TemplatesScreen() {
                                     Remove
                                   </button>
                                 </div>
-                                <SortableContext
-                                  items={itemIds}
-                                  strategy={verticalListSortingStrategy}
-                                >
-                                  <ul className="space-y-0">
-                                    {sortedTplItems.map((it, idx) => (
-                                      <SortableTemplateItemRow
-                                        key={it.id}
-                                        item={it}
-                                        showBorder={idx < sortedTplItems.length - 1}
-                                        onRemove={() => removeTemplateItem(it.id)}
-                                      />
-                                    ))}
-                                  </ul>
-                                </SortableContext>
+                                {sortedTplItems.length === 0 ? (
+                                  <TemplateSubcategoryEmptyDrop subId={sub.id}>
+                                    <ul className="space-y-0">
+                                      <li className="text-11 italic list-none py-1" style={{ color: '#9a9a9a' }}>
+                                        No items yet
+                                      </li>
+                                    </ul>
+                                  </TemplateSubcategoryEmptyDrop>
+                                ) : (
+                                  <>
+                                    <SortableContext
+                                      items={itemIds}
+                                      strategy={verticalListSortingStrategy}
+                                    >
+                                      <ul className="space-y-0">
+                                        {sortedTplItems.map((it, idx) => (
+                                          <SortableTemplateItemRow
+                                            key={it.id}
+                                            item={it}
+                                            showBorder={idx < sortedTplItems.length - 1}
+                                            onRemove={() => removeTemplateItem(it.id)}
+                                          />
+                                        ))}
+                                      </ul>
+                                    </SortableContext>
+                                    <TemplateSubcategoryTailDrop subId={sub.id} />
+                                  </>
+                                )}
                               </div>
                             )
                           })}
 
-                          <div className="flex gap-2 items-center pt-1">
-                            <input
-                              value={tplCategoryDraftBySection[sec.id] || ''}
-                              onChange={e =>
-                                setTplCategoryDraftBySection(prev => ({
-                                  ...prev,
-                                  [sec.id]: e.target.value,
-                                }))
-                              }
-                              onKeyDown={e =>
-                                e.key === 'Enter' && addTemplateCategoryRow(sec.id, tpl.id)
-                              }
-                              placeholder="New category label"
-                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => addTemplateCategoryRow(sec.id, tpl.id)}
-                              className="text-12 font-medium text-navy bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 whitespace-nowrap"
-                            >
-                              + Add category
-                            </button>
+                          <div className="pt-1">
+                            {tplAddCategoryOpenSectionId === sec.id ? (
+                              <div className="flex gap-2 items-center flex-wrap">
+                                <input
+                                  value={tplCategoryDraftBySection[sec.id] || ''}
+                                  onChange={e =>
+                                    setTplCategoryDraftBySection(prev => ({
+                                      ...prev,
+                                      [sec.id]: e.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') addTemplateCategoryRow(sec.id, tpl.id)
+                                    if (e.key === 'Escape') {
+                                      setTplAddCategoryOpenSectionId(null)
+                                      setTplCategoryDraftBySection(prev => ({ ...prev, [sec.id]: '' }))
+                                    }
+                                  }}
+                                  placeholder="Category name"
+                                  autoComplete="off"
+                                  className="flex-1 min-w-[10rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => addTemplateCategoryRow(sec.id, tpl.id)}
+                                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                                >
+                                  Add
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTplAddCategoryOpenSectionId(null)
+                                    setTplCategoryDraftBySection(prev => ({ ...prev, [sec.id]: '' }))
+                                  }}
+                                  className="flex-shrink-0 p-1.5 rounded-input border-0 bg-transparent text-content-hint cursor-pointer inline-flex items-center justify-center"
+                                  aria-label="Cancel adding category"
+                                >
+                                  <X size={18} strokeWidth={2} />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setTplAddCategoryOpenSectionId(sec.id)}
+                                className="text-12 font-medium bg-transparent border-0 cursor-pointer p-0"
+                                style={{ color: '#2d6fb5' }}
+                              >
+                                + Add category
+                              </button>
+                            )}
                           </div>
 
                         </div>
@@ -901,6 +1073,35 @@ export default function TemplatesScreen() {
         )}
       </div>
     </div>
+  )
+}
+
+function TemplateSubcategoryEmptyDrop({ subId, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `drop:${subId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className="rounded-input mb-1 px-1 -mx-1"
+      style={{
+        minHeight: 36,
+        outline: isOver ? '2px dashed #2d6fb5' : undefined,
+        outlineOffset: 2,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+function TemplateSubcategoryTailDrop({ subId }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `drop-end:${subId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className="h-3 rounded-input w-full shrink-0"
+      style={{ backgroundColor: isOver ? 'rgba(45,111,181,0.12)' : undefined }}
+      aria-hidden
+    />
   )
 }
 

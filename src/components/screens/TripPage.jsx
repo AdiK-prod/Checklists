@@ -7,9 +7,9 @@ import {
   useSensors,
   KeyboardSensor,
   closestCenter,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -108,6 +108,7 @@ export default function TripPage() {
     removeChecklistItem,
     saveToTemplate,
     reorderItems,
+    moveChecklistItem,
     rebuildChecklist,
     addStarterChecklist,
     addSection,
@@ -150,26 +151,9 @@ export default function TripPage() {
     event => {
       const { active, over } = event
       if (!over || active.id === over.id || !trip) return
-      const itemId = active.id
-      let subId = null
-      let ids = []
-      outer: for (const sec of trip?.sections ?? []) {
-        for (const sub of sec.subcategories) {
-          const rowIds = sub.items.map(i => i.id)
-          if (rowIds.includes(itemId)) {
-            subId = sub.id
-            ids = rowIds
-            break outer
-          }
-        }
-      }
-      if (!subId) return
-      const oldIndex = ids.indexOf(active.id)
-      const newIndex = ids.indexOf(over.id)
-      if (oldIndex < 0 || newIndex < 0) return
-      reorderItems(subId, arrayMove(ids, oldIndex, newIndex))
+      moveChecklistItem(active.id, over.id)
     },
-    [trip, reorderItems],
+    [trip, moveChecklistItem],
   )
 
   if (loading) {
@@ -987,6 +971,35 @@ function SectionCard({
   )
 }
 
+function ChecklistSubcategoryEmptyDrop({ subId, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `drop:${subId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className="rounded-input mb-1 px-1 -mx-1"
+      style={{
+        minHeight: 36,
+        outline: isOver ? '2px dashed #2d6fb5' : undefined,
+        outlineOffset: 2,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+function ChecklistSubcategoryTailDrop({ subId }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `drop-end:${subId}` })
+  return (
+    <div
+      ref={setNodeRef}
+      className="h-3 rounded-input w-full shrink-0"
+      style={{ backgroundColor: isOver ? 'rgba(45,111,181,0.12)' : undefined }}
+      aria-hidden
+    />
+  )
+}
+
 function GroupLabelBlock({
   sub,
   isFirstGroup,
@@ -1024,27 +1037,33 @@ function GroupLabelBlock({
       >
         {sub.name}
       </p>
-      {sortedItems.length === 0 && (
-        <p className="text-11 mb-2 italic" style={{ color: '#9a9a9a' }}>
-          No items yet
-        </p>
+      {sortedItems.length === 0 ? (
+        <ChecklistSubcategoryEmptyDrop subId={sub.id}>
+          <p className="text-11 mb-2 italic" style={{ color: '#9a9a9a' }}>
+            No items yet
+          </p>
+        </ChecklistSubcategoryEmptyDrop>
+      ) : (
+        <>
+          <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+            {sortedItems.map((item, index) => (
+              <div key={item.id}>
+                <SortableChecklistRow
+                  item={item}
+                  showBorder={index < sortedItems.length - 1}
+                  isNew={newItemIds.has(item.id)}
+                  canSaveToTemplate={canSaveToTemplate}
+                  onToggle={() => onToggleItem(item.id)}
+                  onSave={() => onSaveToTemplate(item.id)}
+                  saveFailed={saveError[item.id]}
+                  onDelete={() => removeChecklistItem(item.id)}
+                />
+              </div>
+            ))}
+          </SortableContext>
+          <ChecklistSubcategoryTailDrop subId={sub.id} />
+        </>
       )}
-      <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-        {sortedItems.map((item, index) => (
-          <div key={item.id}>
-            <SortableChecklistRow
-              item={item}
-              showBorder={index < sortedItems.length - 1}
-              isNew={newItemIds.has(item.id)}
-              canSaveToTemplate={canSaveToTemplate}
-              onToggle={() => onToggleItem(item.id)}
-              onSave={() => onSaveToTemplate(item.id)}
-              saveFailed={saveError[item.id]}
-              onDelete={() => removeChecklistItem(item.id)}
-            />
-          </div>
-        ))}
-      </SortableContext>
     </div>
   )
 }

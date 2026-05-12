@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { arrayMove } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
 import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip } from '../lib/tripService'
 import {
@@ -583,6 +584,151 @@ export function useTripDetail(tripId) {
     if (failed?.error) console.error('reorder checklist items:', failed.error.message)
   }, [tripId])
 
+  const moveChecklistItem = useCallback(
+    async (activeId, overId) => {
+      if (!tripId) return
+      const aid = String(activeId)
+      const oid = String(overId)
+      if (aid === oid) return
+
+      const rawActive = rawItemsRef.current.find(i => i.id === aid)
+      if (!rawActive) return
+      const sourceSubId = rawActive.subcategory_id
+
+      const sortIdsForSub = subId =>
+        rawItemsRef.current
+          .filter(i => i.subcategory_id === subId)
+          .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+          .map(i => i.id)
+
+      let targetSubId
+      let insertMode
+
+      if (oid.startsWith('drop-end:')) {
+        targetSubId = oid.slice('drop-end:'.length)
+        insertMode = 'append'
+      } else if (oid.startsWith('drop:')) {
+        targetSubId = oid.slice('drop:'.length)
+        insertMode = 'empty'
+      } else {
+        const rawOver = rawItemsRef.current.find(i => i.id === oid)
+        if (!rawOver) return
+        targetSubId = rawOver.subcategory_id
+        insertMode = 'before_item'
+      }
+
+      if (sourceSubId === targetSubId) {
+        if (insertMode === 'append') {
+          const endSub = targetSubId
+          if (String(endSub) !== String(sourceSubId)) return
+          const ids = sortIdsForSub(sourceSubId)
+          const oldIndex = ids.indexOf(aid)
+          if (oldIndex < 0) return
+          const newIds = [...ids.filter(id => id !== aid), aid]
+          await reorderItems(sourceSubId, newIds)
+          return
+        }
+        if (insertMode === 'empty') return
+        const ids = sortIdsForSub(sourceSubId)
+        const oldIndex = ids.indexOf(aid)
+        const newIndex = ids.indexOf(oid)
+        if (oldIndex < 0 || newIndex < 0) return
+        await reorderItems(sourceSubId, arrayMove(ids, oldIndex, newIndex))
+        return
+      }
+
+      const sourceIds = sortIdsForSub(sourceSubId).filter(id => id !== aid)
+      let targetIds = sortIdsForSub(targetSubId).filter(id => id !== aid)
+
+      let insertIndex
+      if (insertMode === 'append') {
+        insertIndex = targetIds.length
+      } else if (insertMode === 'empty') {
+        insertIndex = 0
+      } else {
+        insertIndex = targetIds.indexOf(oid)
+        if (insertIndex < 0) insertIndex = targetIds.length
+      }
+
+      const newTargetIds = [...targetIds.slice(0, insertIndex), aid, ...targetIds.slice(insertIndex)]
+
+      const nextRows = rawItemsRef.current.map(r => ({ ...r }))
+      const applySubOrder = (subId, orderedIds) => {
+        orderedIds.forEach((id, idx) => {
+          const r = nextRows.find(x => x.id === id)
+          if (r) {
+            r.subcategory_id = subId
+            r.sort_order = (idx + 1) * 10
+          }
+        })
+      }
+      applySubOrder(sourceSubId, sourceIds)
+      applySubOrder(targetSubId, newTargetIds)
+      rawItemsRef.current = nextRows
+
+      setTrip(prev => {
+        if (!prev) return prev
+        const itemMap = new Map()
+        for (const sec of prev.sections) {
+          for (const sub of sec.subcategories) {
+            for (const it of sub.items) itemMap.set(it.id, it)
+          }
+        }
+        const mapIdsToItems = (subCatId, ids) =>
+          ids
+            .map((id, idx) => {
+              const it = itemMap.get(id)
+              if (!it) return null
+              return {
+                ...it,
+                subcategoryId: subCatId,
+                sortOrder: (idx + 1) * 10,
+              }
+            })
+            .filter(Boolean)
+        const sections = prev.sections.map(sec => ({
+          ...sec,
+          subcategories: sec.subcategories.map(sub => {
+            if (sub.id === sourceSubId) {
+              return { ...sub, items: mapIdsToItems(sourceSubId, sourceIds) }
+            }
+            if (sub.id === targetSubId) {
+              return { ...sub, items: mapIdsToItems(targetSubId, newTargetIds) }
+            }
+            return sub
+          }),
+        }))
+        return {
+          ...prev,
+          sections,
+          aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+        }
+      })
+
+      const updates = []
+      for (let i = 0; i < sourceIds.length; i++) {
+        updates.push(
+          supabase
+            .from('checklist_items')
+            .update({ sort_order: (i + 1) * 10, subcategory_id: sourceSubId })
+            .eq('id', sourceIds[i]),
+        )
+      }
+      for (let i = 0; i < newTargetIds.length; i++) {
+        updates.push(
+          supabase
+            .from('checklist_items')
+            .update({ sort_order: (i + 1) * 10, subcategory_id: targetSubId })
+            .eq('id', newTargetIds[i]),
+        )
+      }
+      const results = await Promise.all(updates)
+      const failed = results.find(r => r.error)
+      if (failed?.error) console.error('move checklist item:', failed.error.message)
+    },
+    [tripId, reorderItems],
+  )
+
   const removeSubcategory = useCallback(async subcategoryId => {
     const { error: delErr } = await supabase.from('checklist_subcategories').delete().eq('id', subcategoryId)
     if (delErr) {
@@ -812,6 +958,7 @@ export function useTripDetail(tripId) {
     removeSubcategory,
     saveToTemplate,
     reorderItems,
+    moveChecklistItem,
     rebuildChecklist,
     addStarterChecklist,
     addSection,
