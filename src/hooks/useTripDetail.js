@@ -6,6 +6,7 @@ import {
   buildSectionsTree,
   attachMembersToSections,
   normalizeMember,
+  buildAiSuggestionsFromSections,
 } from '../lib/transforms'
 import { ensureChecklistMiscSubcategory } from '../lib/checklistLayout'
 
@@ -448,9 +449,138 @@ export function useTripDetail(tripId) {
         ...sec,
         subcategories: sec.subcategories.filter(s => s.id !== subcategoryId),
       }))
-      return { ...prev, sections }
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
     })
   }, [])
+
+  const removeSection = useCallback(async sectionId => {
+    const { error: delErr } = await supabase.from('checklist_sections').delete().eq('id', sectionId)
+    if (delErr) {
+      console.error(delErr)
+      throw delErr
+    }
+    const subIds = [...rawSubByIdRef.current.values()]
+      .filter(s => s.section_id === sectionId)
+      .map(s => s.id)
+    const subSet = new Set(subIds)
+    rawItemsRef.current = rawItemsRef.current.filter(i => !subSet.has(i.subcategory_id))
+    const nextSubs = new Map(rawSubByIdRef.current)
+    for (const id of subIds) nextSubs.delete(id)
+    rawSubByIdRef.current = nextSubs
+    const nextSecs = new Map(rawSectionByIdRef.current)
+    nextSecs.delete(sectionId)
+    rawSectionByIdRef.current = nextSecs
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.filter(s => s.id !== sectionId)
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+  }, [])
+
+  const updateSection = useCallback(async (sectionId, name) => {
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return
+    const { error: uErr } = await supabase
+      .from('checklist_sections')
+      .update({ name: trimmed })
+      .eq('id', sectionId)
+    if (uErr) {
+      console.error(uErr)
+      throw uErr
+    }
+    const prevRow = rawSectionByIdRef.current.get(sectionId)
+    if (prevRow) {
+      rawSectionByIdRef.current = new Map(rawSectionByIdRef.current).set(sectionId, {
+        ...prevRow,
+        name: trimmed,
+      })
+    }
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(s => (s.id === sectionId ? { ...s, name: trimmed } : s))
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+  }, [])
+
+  const addSection = useCallback(
+    async ({ sectionType, name, memberId }) => {
+      if (!tripId) return null
+      const trimmed = String(name || '').trim()
+      if (!trimmed) return null
+      if (sectionType === 'person' && !memberId) return null
+
+      if (sectionType === 'person') {
+        const dup = [...rawSectionByIdRef.current.values()].some(
+          s => s.section_type === 'person' && s.member_id === memberId,
+        )
+        if (dup) return null
+      }
+
+      const sectionsArr = [...rawSectionByIdRef.current.values()]
+      const maxSo = sectionsArr.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+
+      const { data, error: insErr } = await supabase
+        .from('checklist_sections')
+        .insert({
+          trip_id: tripId,
+          section_type: sectionType,
+          name: trimmed,
+          member_id: sectionType === 'person' ? memberId : null,
+          sort_order: maxSo + 1,
+        })
+        .select()
+        .single()
+
+      if (insErr) {
+        console.error(insErr)
+        return null
+      }
+      if (!data) return null
+
+      rawSectionByIdRef.current = new Map(rawSectionByIdRef.current).set(data.id, data)
+
+      setTrip(prev => {
+        if (!prev) return prev
+        const member =
+          sectionType === 'person' && memberId
+            ? prev.members.find(m => m.id === memberId) || null
+            : null
+        const newSec = {
+          id: data.id,
+          sectionType: data.section_type,
+          name: data.name,
+          memberId: data.member_id,
+          sortOrder: data.sort_order,
+          member,
+          subcategories: [],
+        }
+        const sections = [...prev.sections, newSec].sort(
+          (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+        )
+        return {
+          ...prev,
+          sections,
+          aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+        }
+      })
+
+      return data.id
+    },
+    [tripId],
+  )
 
   const saveToTemplate = useCallback(async itemId => {
     const templateId = templateIdRef.current
@@ -505,5 +635,8 @@ export function useTripDetail(tripId) {
     reorderItems,
     rebuildChecklist,
     addStarterChecklist,
+    addSection,
+    updateSection,
+    removeSection,
   }
 }

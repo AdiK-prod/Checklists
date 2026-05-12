@@ -32,9 +32,15 @@ function normalizeTemplateRow(t) {
 function countTemplateItems(tpl) {
   let n = 0
   for (const sec of tpl.template_sections || []) {
-    for (const sub of sec.template_subcategories || []) {
-      n += asArray(sub.template_items).length
-    }
+    n += countTemplateSectionItems(sec)
+  }
+  return n
+}
+
+function countTemplateSectionItems(sec) {
+  let n = 0
+  for (const sub of sec.template_subcategories || []) {
+    n += asArray(sub.template_items).length
   }
   return n
 }
@@ -51,6 +57,12 @@ export default function TemplatesScreen() {
   const [editNameValue, setEditNameValue] = useState('')
   const [subAddOpen, setSubAddOpen] = useState(null)
   const [subAddName, setSubAddName] = useState('')
+  const [members, setMembers] = useState([])
+  const [editingTplSectionId, setEditingTplSectionId] = useState(null)
+  const [tplSectionEditName, setTplSectionEditName] = useState('')
+  const [newSharedCatName, setNewSharedCatName] = useState('')
+  const [newPersonMemberId, setNewPersonMemberId] = useState('')
+  const [newPersonCatName, setNewPersonCatName] = useState('')
 
   const load = useCallback(async () => {
     if (!household?.id) {
@@ -92,8 +104,36 @@ export default function TemplatesScreen() {
   }, [load])
 
   useEffect(() => {
-    if (!openId) return
+    if (!household?.id) {
+      setMembers([])
+      return
+    }
+    let cancelled = false
+    supabase
+      .from('household_members')
+      .select('id, name, role')
+      .eq('household_id', household.id)
+      .order('name')
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) {
+          console.error(error)
+          return
+        }
+        setMembers(Array.isArray(data) ? data : [])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [household?.id])
+
+  useEffect(() => {
     setAddSubId('')
+    setNewSharedCatName('')
+    setNewPersonMemberId('')
+    setNewPersonCatName('')
+    setEditingTplSectionId(null)
+    setTplSectionEditName('')
   }, [openId])
 
   useEffect(() => {
@@ -195,6 +235,82 @@ export default function TemplatesScreen() {
     await load()
   }
 
+  async function addTemplateSharedCategory(templateId) {
+    const name = newSharedCatName.trim()
+    if (!name) return
+    const tpl = rows.find(r => r.id === templateId)
+    const secs = tpl?.template_sections || []
+    const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { error } = await supabase.from('template_sections').insert({
+      template_id: templateId,
+      section_type: 'shared',
+      name,
+      member_id: null,
+      sort_order: maxSo + 1,
+    })
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setNewSharedCatName('')
+    await load()
+  }
+
+  async function addTemplatePersonCategory(templateId) {
+    const memberId = newPersonMemberId
+    if (!memberId) {
+      alert('Select a household member.')
+      return
+    }
+    const tpl = rows.find(r => r.id === templateId)
+    const name =
+      newPersonCatName.trim() || members.find(m => m.id === memberId)?.name || ''
+    if (!name) return
+    if (tpl?.template_sections?.some(s => s.section_type === 'person' && s.member_id === memberId)) {
+      alert('This person already has a category in this template.')
+      return
+    }
+    const secs = tpl?.template_sections || []
+    const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { error } = await supabase.from('template_sections').insert({
+      template_id: templateId,
+      section_type: 'person',
+      name,
+      member_id: memberId,
+      sort_order: maxSo + 1,
+    })
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setNewPersonCatName('')
+    setNewPersonMemberId('')
+    await load()
+  }
+
+  async function saveTplSectionName(sectionId) {
+    const name = tplSectionEditName.trim()
+    if (!name) return
+    const { error } = await supabase.from('template_sections').update({ name }).eq('id', sectionId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setEditingTplSectionId(null)
+    await load()
+  }
+
+  async function removeTemplateSection(sec) {
+    const n = countTemplateSectionItems(sec)
+    if (!window.confirm(`Remove category "${sec.name}" and all ${n} items inside?`)) return
+    const { error } = await supabase.from('template_sections').delete().eq('id', sec.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    await load()
+  }
+
   function subcategoryOptions(tpl) {
     const opts = []
     for (const sec of tpl.template_sections || []) {
@@ -224,10 +340,8 @@ export default function TemplatesScreen() {
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pb-8">
         <p className="text-12 text-content-secondary mb-4">
-          These lists seed each traveller&apos;s checklist when you start a new trip. You can also add
-          items from a trip back into a template. New templates get a shared &quot;Essentials&quot; area
-          with a bottom {TEMPLATE_MISC_SUBCATEGORY} bucket; items use that bucket unless you pick another
-          subcategory.
+          Categories are the top level of each template (shared groups and one block per traveller). Inside each
+          category you can add subcategories and items. Trips copy this structure when you create them.
         </p>
 
         {loading ? (
@@ -309,10 +423,70 @@ export default function TemplatesScreen() {
                       )}
 
                       {(tpl.template_sections || []).map(sec => (
-                        <div key={sec.id} className="space-y-2">
-                          <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em]">
-                            {sec.name}
-                          </p>
+                        <div
+                          key={sec.id}
+                          className="space-y-2 rounded-input p-2"
+                          style={{ border: '0.5px solid rgba(0,0,0,0.06)' }}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            {editingTplSectionId === sec.id ? (
+                              <div className="flex flex-1 flex-wrap gap-2 items-center min-w-0">
+                                <input
+                                  value={tplSectionEditName}
+                                  onChange={e => setTplSectionEditName(e.target.value)}
+                                  onKeyDown={e => e.key === 'Enter' && saveTplSectionName(sec.id)}
+                                  className="flex-1 min-w-[8rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => saveTplSectionName(sec.id)}
+                                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingTplSectionId(null)}
+                                  className="text-12 text-content-secondary px-2"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="min-w-0">
+                                  <p className="text-12 font-medium text-content-primary">{sec.name}</p>
+                                  <p className="text-10 text-content-hint">
+                                    {sec.section_type === 'shared'
+                                      ? 'Shared category'
+                                      : `Traveller · ${
+                                          members.find(m => m.id === sec.member_id)?.name || 'Member'
+                                        }`}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingTplSectionId(sec.id)
+                                      setTplSectionEditName(sec.name)
+                                    }}
+                                    className="text-11 bg-transparent border-0 cursor-pointer p-0"
+                                    style={{ color: '#2d6fb5' }}
+                                  >
+                                    Rename
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeTemplateSection(sec)}
+                                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
                           {(sec.template_subcategories || []).map(sub => (
                             <div key={sub.id} className="pl-2 border-l-2 border-[#e8e4dc]">
                               <p className="text-12 font-medium text-content-primary mb-1">{sub.name}</p>
@@ -371,6 +545,68 @@ export default function TemplatesScreen() {
                           </div>
                         </div>
                       ))}
+
+                      <div
+                        className="rounded-input bg-page p-3 space-y-3"
+                        style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+                      >
+                        <p className="text-11 font-medium text-content-secondary">Add category</p>
+                        <div className="space-y-2">
+                          <p className="text-12 text-content-primary">Shared (everyone)</p>
+                          <div className="flex gap-2">
+                            <input
+                              value={newSharedCatName}
+                              onChange={e => setNewSharedCatName(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && addTemplateSharedCategory(tpl.id)}
+                              placeholder="Category name"
+                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addTemplateSharedCategory(tpl.id)}
+                              className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-12 text-content-primary">Traveller (personal)</p>
+                          <select
+                            value={newPersonMemberId}
+                            onChange={e => {
+                              const id = e.target.value
+                              setNewPersonMemberId(id)
+                              const m = members.find(x => x.id === id)
+                              if (m) setNewPersonCatName(m.name)
+                            }}
+                            className="w-full text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                          >
+                            <option value="">Select household member…</option>
+                            {members.map(m => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="flex gap-2">
+                            <input
+                              value={newPersonCatName}
+                              onChange={e => setNewPersonCatName(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && addTemplatePersonCategory(tpl.id)}
+                              placeholder="Category title (optional)"
+                              className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addTemplatePersonCategory(tpl.id)}
+                              className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      </div>
 
                       <div
                         className="rounded-input bg-page p-2 space-y-2"

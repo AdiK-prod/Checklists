@@ -133,6 +133,9 @@ export default function TripPage() {
     reorderItems,
     rebuildChecklist,
     addStarterChecklist,
+    addSection,
+    updateSection,
+    removeSection,
   } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
@@ -499,7 +502,7 @@ export default function TripPage() {
         )}
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          {sharedSections.length > 0 && <TrackLabel>Shared</TrackLabel>}
+          <TrackLabel>Shared</TrackLabel>
           {sharedSections.map(sec => (
             <SectionCard
               key={sec.id}
@@ -512,10 +515,12 @@ export default function TripPage() {
               onAddSubcategory={addSubcategory}
               onRemoveSubcategory={removeSubcategory}
               onSaveToTemplate={saveToTemplate}
+              onUpdateSection={updateSection}
+              onRemoveSection={removeSection}
             />
           ))}
 
-          {personSections.length > 0 && <TrackLabel>People</TrackLabel>}
+          <TrackLabel>People</TrackLabel>
           {personSections.map(sec => (
             <SectionCard
               key={sec.id}
@@ -528,9 +533,120 @@ export default function TripPage() {
               onAddSubcategory={addSubcategory}
               onRemoveSubcategory={removeSubcategory}
               onSaveToTemplate={saveToTemplate}
+              onUpdateSection={updateSection}
+              onRemoveSection={removeSection}
             />
           ))}
+
+          <TripAddCategoryPanel trip={trip} addSection={addSection} />
         </DndContext>
+      </div>
+    </div>
+  )
+}
+
+function TripAddCategoryPanel({ trip, addSection }) {
+  const [sharedName, setSharedName] = useState('')
+  const [personMemberId, setPersonMemberId] = useState('')
+  const [personName, setPersonName] = useState('')
+
+  const membersList = Array.isArray(trip?.members) ? trip.members : []
+  const travellerIds = Array.isArray(trip?.travellers) ? trip.travellers : []
+  const travellers = useMemo(
+    () => membersList.filter(m => travellerIds.includes(m.id)),
+    [membersList, travellerIds],
+  )
+
+  const handleAddShared = async () => {
+    const name = sharedName.trim()
+    if (!name) return
+    const id = await addSection({ sectionType: 'shared', name })
+    if (id) setSharedName('')
+  }
+
+  const handleAddPerson = async () => {
+    if (!personMemberId) {
+      window.alert('Choose a traveller.')
+      return
+    }
+    const fallback = travellers.find(m => m.id === personMemberId)?.name || ''
+    const name = personName.trim() || fallback
+    if (!name) return
+    const id = await addSection({ sectionType: 'person', name, memberId: personMemberId })
+    if (!id) {
+      window.alert('This traveller already has a category on this trip.')
+      return
+    }
+    setPersonName('')
+    setPersonMemberId('')
+  }
+
+  return (
+    <div
+      className="bg-white rounded-card mb-[10px] p-3 space-y-4"
+      style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+    >
+      <p
+        className="text-11 font-medium uppercase tracking-[0.08em] text-content-secondary"
+      >
+        Add category
+      </p>
+      <div className="space-y-2">
+        <p className="text-12 font-medium text-content-primary">Shared (everyone)</p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={sharedName}
+            onChange={e => setSharedName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddShared()}
+            placeholder="Category name"
+            className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+          />
+          <button
+            type="button"
+            onClick={handleAddShared}
+            className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-12 font-medium text-content-primary">Traveller (personal)</p>
+        <select
+          value={personMemberId}
+          onChange={e => {
+            const id = e.target.value
+            setPersonMemberId(id)
+            const m = travellers.find(x => x.id === id)
+            if (m) setPersonName(m.name)
+          }}
+          className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+        >
+          <option value="">Select traveller…</option>
+          {travellers.map(m => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={personName}
+            onChange={e => setPersonName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddPerson()}
+            placeholder="Category title (optional)"
+            className="flex-1 text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+          />
+          <button
+            type="button"
+            onClick={handleAddPerson}
+            className="text-12 font-medium text-white bg-navy rounded-input px-3 py-2 flex-shrink-0"
+          >
+            Add
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -546,6 +662,8 @@ function SectionCard({
   onAddSubcategory,
   onRemoveSubcategory,
   onSaveToTemplate,
+  onUpdateSection,
+  onRemoveSection,
 }) {
   const [expanded, setExpanded] = useState(true)
   const [subInputOpen, setSubInputOpen] = useState(false)
@@ -556,6 +674,12 @@ function SectionCard({
   const [pendingFocusSubId, setPendingFocusSubId] = useState(null)
   const [quickLabel, setQuickLabel] = useState('')
   const [quickSubId, setQuickSubId] = useState('')
+  const [nameEditOpen, setNameEditOpen] = useState(false)
+  const [nameDraft, setNameDraft] = useState(section.name)
+
+  useEffect(() => {
+    setNameDraft(section.name)
+  }, [section.name])
 
   const sortedSubs = useMemo(
     () =>
@@ -608,6 +732,33 @@ function SectionCard({
     const subId = quickSubId.trim() ? quickSubId : null
     const newId = await onAddItemToSection(section.id, subId, label)
     if (newId) setNewItemIds(prev => new Set([...prev, newId]))
+  }
+
+  const handleSaveRename = async () => {
+    const n = nameDraft.trim()
+    if (!n) return
+    try {
+      await onUpdateSection(section.id, n)
+      setNameEditOpen(false)
+    } catch {
+      window.alert('Could not rename category.')
+    }
+  }
+
+  const handleRemoveSection = async () => {
+    const { total } = sectionItemTotals(section)
+    if (
+      !window.confirm(
+        `Remove category "${section.name}" and everything inside (${total} item${total !== 1 ? 's' : ''})?`,
+      )
+    ) {
+      return
+    }
+    try {
+      await onRemoveSection(section.id)
+    } catch {
+      window.alert('Could not remove category.')
+    }
   }
 
   return (
@@ -669,6 +820,59 @@ function SectionCard({
         }}
       >
         <div style={{ overflow: 'hidden' }}>
+          <div className="px-[14px] pt-2 pb-1 flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(0,0,0,0.06)]">
+            {nameEditOpen ? (
+              <div className="flex flex-1 flex-wrap gap-2 items-center min-w-0">
+                <input
+                  type="text"
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveRename()}
+                  className="flex-1 min-w-[8rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveRename}
+                  className="text-12 font-medium text-navy bg-transparent border-0 cursor-pointer p-0"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(section.name)
+                    setNameEditOpen(false)
+                  }}
+                  className="text-12 text-content-secondary bg-transparent border-0 cursor-pointer p-0"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="text-11 text-content-hint">
+                  {variant === 'shared' ? 'Shared category' : 'Traveller category'}
+                </span>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setNameEditOpen(true)}
+                    className="text-11 bg-transparent border-0 cursor-pointer p-0"
+                    style={{ color: '#2d6fb5' }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveSection}
+                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <div className="px-[14px] pt-2 pb-[13px] space-y-3">
             {sortedSubs.map(sub => (
               <SubcategoryBlock
