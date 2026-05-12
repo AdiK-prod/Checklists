@@ -3,6 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2, Plane, Car, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+import {
+  ensureTemplateHasMinimalTree,
+  ensureTemplateMiscSubcategory,
+  TEMPLATE_MISC_SUBCATEGORY,
+} from '../../lib/templateLayout'
 import { asArray } from '../../lib/transforms'
 
 const ICON_MAP = { Plane, Car, Moon }
@@ -34,16 +39,6 @@ function countTemplateItems(tpl) {
   return n
 }
 
-function firstSubcategoryId(tpl) {
-  for (const sec of tpl.template_sections || []) {
-    const subs = [...asArray(sec.template_subcategories)].sort(
-      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-    )
-    if (subs[0]?.id) return subs[0].id
-  }
-  return null
-}
-
 export default function TemplatesScreen() {
   const { household } = useAuth()
   const navigate = useNavigate()
@@ -51,7 +46,7 @@ export default function TemplatesScreen() {
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState(null)
   const [newLabel, setNewLabel] = useState('')
-  const [addSubId, setAddSubId] = useState(null)
+  const [addSubId, setAddSubId] = useState('')
   const [editingNameId, setEditingNameId] = useState(null)
   const [editNameValue, setEditNameValue] = useState('')
   const [subAddOpen, setSubAddOpen] = useState(null)
@@ -98,9 +93,29 @@ export default function TemplatesScreen() {
 
   useEffect(() => {
     if (!openId) return
+    setAddSubId('')
+  }, [openId])
+
+  useEffect(() => {
+    if (!openId || !household?.id) return
     const tpl = rows.find(r => r.id === openId)
-    if (tpl) setAddSubId(firstSubcategoryId(tpl))
-  }, [openId, rows])
+    if (!tpl) return
+    const hasNoSections = !(tpl.template_sections || []).length
+    if (!hasNoSections) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const created = await ensureTemplateHasMinimalTree(supabase, openId)
+        if (!cancelled && created) await load()
+      } catch (e) {
+        if (!cancelled) alert(e?.message || 'Could not prepare template.')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [openId, rows, household?.id, load])
 
   async function saveTemplateName(id) {
     const name = editNameValue.trim()
@@ -126,12 +141,21 @@ export default function TemplatesScreen() {
 
   async function addItem(templateId) {
     const label = newLabel.trim()
-    if (!label || !addSubId) return
+    if (!label) return
+
+    let subId = addSubId.trim() ? addSubId : null
+    try {
+      if (!subId) subId = await ensureTemplateMiscSubcategory(supabase, templateId)
+    } catch (e) {
+      alert(e?.message || 'Could not resolve subcategory.')
+      return
+    }
+
     const tpl = rows.find(r => r.id === templateId)
     let maxOrder = 0
     outer: for (const sec of tpl?.template_sections || []) {
       for (const sub of sec.template_subcategories || []) {
-        if (sub.id !== addSubId) continue
+        if (sub.id !== subId) continue
         for (const it of sub.template_items || []) {
           maxOrder = Math.max(maxOrder, it.sort_order ?? 0)
         }
@@ -139,7 +163,7 @@ export default function TemplatesScreen() {
       }
     }
     const { error } = await supabase.from('template_items').insert({
-      subcategory_id: addSubId,
+      subcategory_id: subId,
       label,
       sort_order: maxOrder + 1,
     })
@@ -201,7 +225,9 @@ export default function TemplatesScreen() {
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pb-8">
         <p className="text-12 text-content-secondary mb-4">
           These lists seed each traveller&apos;s checklist when you start a new trip. You can also add
-          items from a trip back into a template.
+          items from a trip back into a template. New templates get a shared &quot;Essentials&quot; area
+          with a bottom {TEMPLATE_MISC_SUBCATEGORY} bucket; items use that bucket unless you pick another
+          subcategory.
         </p>
 
         {loading ? (
@@ -356,25 +382,25 @@ export default function TemplatesScreen() {
                           placeholder="New item label"
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         />
+                        <label className="block text-11 text-content-secondary">Subcategory (optional)</label>
                         <select
-                          value={addSubId || ''}
-                          onChange={e => setAddSubId(e.target.value || null)}
+                          value={addSubId}
+                          onChange={e => setAddSubId(e.target.value)}
                           className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
                         >
-                          {subOpts.length === 0 ? (
-                            <option value="">Add a subcategory first</option>
-                          ) : (
-                            subOpts.map(o => (
-                              <option key={o.id} value={o.id}>
-                                {o.label}
-                              </option>
-                            ))
-                          )}
+                          <option value="">
+                            {TEMPLATE_MISC_SUBCATEGORY} — default (bottom of shared area)
+                          </option>
+                          {subOpts.map(o => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
                         </select>
                         <button
                           type="button"
                           onClick={() => addItem(tpl.id)}
-                          disabled={!addSubId || subOpts.length === 0}
+                          disabled={!newLabel.trim()}
                           className="w-full flex items-center justify-center gap-1.5 py-2 rounded-button border border-[#e0ddd8] text-13 font-medium text-navy bg-white disabled:opacity-50"
                         >
                           <Plus size={16} />

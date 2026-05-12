@@ -7,6 +7,7 @@ import {
   attachMembersToSections,
   normalizeMember,
 } from '../lib/transforms'
+import { ensureChecklistMiscSubcategory } from '../lib/checklistLayout'
 
 function updateItemInSections(sections, itemId, patch) {
   return sections.map(sec => ({
@@ -233,65 +234,113 @@ export function useTripDetail(tripId) {
     if (uErr) console.error(uErr)
   }, [])
 
+  const insertChecklistItem = useCallback(async (subcategoryId, trimmed) => {
+    if (!tripId) return null
+
+    const siblings = rawItemsRef.current.filter(i => i.subcategory_id === subcategoryId)
+    const sortBase = siblings.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0)
+
+    const newRaw = {
+      subcategory_id: subcategoryId,
+      label: trimmed,
+      sort_order: sortBase + 1,
+      checked: false,
+      is_ai_suggested: false,
+      is_manually_added: true,
+      saved_to_template: false,
+    }
+
+    const { data, error: insErr } = await supabase
+      .from('checklist_items')
+      .insert(newRaw)
+      .select()
+      .single()
+
+    if (insErr) {
+      console.error('add checklist item:', insErr.message, insErr)
+      return null
+    }
+    if (!data) return null
+
+    rawItemsRef.current = [...rawItemsRef.current, data]
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(sec => ({
+        ...sec,
+        subcategories: sec.subcategories.map(sub => {
+          if (sub.id !== subcategoryId) return sub
+          const maxSo = sub.items.reduce((m, i) => Math.max(m, Number(i.sortOrder) || 0), 0)
+          const newItem = {
+            id: data.id,
+            subcategoryId: data.subcategory_id,
+            label: data.label,
+            checked: data.checked,
+            isAiSuggested: data.is_ai_suggested,
+            isManuallyAdded: data.is_manually_added,
+            savedToTemplate: data.saved_to_template,
+            sortOrder: data.sort_order ?? maxSo + 1,
+          }
+          return { ...sub, items: [...sub.items, newItem].sort((a, b) => a.sortOrder - b.sortOrder) }
+        }),
+      }))
+      return { ...prev, sections, aiSuggestions: prev.aiSuggestions }
+    })
+
+    return data.id
+  }, [tripId])
+
   const addItem = useCallback(
     async (subcategoryId, label) => {
+      const trimmed = String(label || '').trim()
+      if (!trimmed) return null
+      return insertChecklistItem(subcategoryId, trimmed)
+    },
+    [insertChecklistItem],
+  )
+
+  const addItemToSection = useCallback(
+    async (sectionId, preferredSubId, label) => {
       if (!tripId) return null
       const trimmed = String(label || '').trim()
       if (!trimmed) return null
 
-      const siblings = rawItemsRef.current.filter(i => i.subcategory_id === subcategoryId)
-      const sortBase = siblings.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0)
+      let subcategoryId = preferredSubId && String(preferredSubId).trim() ? preferredSubId : null
 
-      const newRaw = {
-        subcategory_id: subcategoryId,
-        label: trimmed,
-        sort_order: sortBase + 1,
-        checked: false,
-        is_ai_suggested: false,
-        is_manually_added: true,
-        saved_to_template: false,
+      if (!subcategoryId) {
+        try {
+          const { subcategoryId: miscId, created } = await ensureChecklistMiscSubcategory(supabase, sectionId)
+          subcategoryId = miscId
+          if (created) {
+            rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(created.id, created)
+            setTrip(prev => {
+              if (!prev) return prev
+              const sections = prev.sections.map(sec => {
+                if (sec.id !== sectionId) return sec
+                const newSub = {
+                  id: created.id,
+                  name: created.name,
+                  sortOrder: created.sort_order,
+                  isManuallyAdded: created.is_manually_added,
+                  items: [],
+                }
+                const nextSubs = [...sec.subcategories, newSub].sort(
+                  (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+                )
+                return { ...sec, subcategories: nextSubs }
+              })
+              return { ...prev, sections, aiSuggestions: prev.aiSuggestions }
+            })
+          }
+        } catch (e) {
+          console.error('ensure Misc. subcategory:', e?.message, e)
+          return null
+        }
       }
 
-      const { data, error: insErr } = await supabase
-        .from('checklist_items')
-        .insert(newRaw)
-        .select()
-        .single()
-
-      if (insErr) {
-        console.error('add checklist item:', insErr.message, insErr)
-        return null
-      }
-      if (!data) return null
-
-      rawItemsRef.current = [...rawItemsRef.current, data]
-
-      setTrip(prev => {
-        if (!prev) return prev
-        const sections = prev.sections.map(sec => ({
-          ...sec,
-          subcategories: sec.subcategories.map(sub => {
-            if (sub.id !== subcategoryId) return sub
-            const maxSo = sub.items.reduce((m, i) => Math.max(m, Number(i.sortOrder) || 0), 0)
-            const newItem = {
-              id: data.id,
-              subcategoryId: data.subcategory_id,
-              label: data.label,
-              checked: data.checked,
-              isAiSuggested: data.is_ai_suggested,
-              isManuallyAdded: data.is_manually_added,
-              savedToTemplate: data.saved_to_template,
-              sortOrder: data.sort_order ?? maxSo + 1,
-            }
-            return { ...sub, items: [...sub.items, newItem].sort((a, b) => a.sortOrder - b.sortOrder) }
-          }),
-        }))
-        return { ...prev, sections, aiSuggestions: prev.aiSuggestions }
-      })
-
-      return data.id
+      return insertChecklistItem(subcategoryId, trimmed)
     },
-    [tripId],
+    [tripId, insertChecklistItem],
   )
 
   const reorderItems = useCallback(async (subcategoryId, orderedIds) => {
@@ -449,6 +498,7 @@ export function useTripDetail(tripId) {
     error,
     toggleItem,
     addItem,
+    addItemToSection,
     addSubcategory,
     removeSubcategory,
     saveToTemplate,

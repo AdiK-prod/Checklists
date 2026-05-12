@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { TEMPLATE_MISC_SUBCATEGORY } from './templateLayout'
 
 export const CHECKLIST_INSERT_CHUNK = 200
 const AI_LOG_MAX_CHARS = 120_000
@@ -207,7 +208,7 @@ export async function ensureMinimalChecklistForTrip(tripId) {
 
   const { error: subErr } = await supabase.from('checklist_subcategories').insert({
     section_id: section.id,
-    name: 'Items',
+    name: TEMPLATE_MISC_SUBCATEGORY,
     sort_order: 0,
     is_manually_added: true,
   })

@@ -39,6 +39,7 @@ import {
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
+import { TEMPLATE_MISC_SUBCATEGORY } from '../../lib/templateLayout'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -125,6 +126,7 @@ export default function TripPage() {
     error,
     toggleItem,
     addItem,
+    addItemToSection,
     addSubcategory,
     removeSubcategory,
     saveToTemplate,
@@ -506,6 +508,7 @@ export default function TripPage() {
               templateId={trip.templateId}
               onToggleItem={toggleItem}
               onAddItem={addItem}
+              onAddItemToSection={addItemToSection}
               onAddSubcategory={addSubcategory}
               onRemoveSubcategory={removeSubcategory}
               onSaveToTemplate={saveToTemplate}
@@ -521,6 +524,7 @@ export default function TripPage() {
               templateId={trip.templateId}
               onToggleItem={toggleItem}
               onAddItem={addItem}
+              onAddItemToSection={addItemToSection}
               onAddSubcategory={addSubcategory}
               onRemoveSubcategory={removeSubcategory}
               onSaveToTemplate={saveToTemplate}
@@ -538,6 +542,7 @@ function SectionCard({
   templateId,
   onToggleItem,
   onAddItem,
+  onAddItemToSection,
   onAddSubcategory,
   onRemoveSubcategory,
   onSaveToTemplate,
@@ -549,6 +554,16 @@ function SectionCard({
   const [saveErrors, setSaveErrors] = useState({})
   const newSubInputRef = useRef(null)
   const [pendingFocusSubId, setPendingFocusSubId] = useState(null)
+  const [quickLabel, setQuickLabel] = useState('')
+  const [quickSubId, setQuickSubId] = useState('')
+
+  const sortedSubs = useMemo(
+    () =>
+      [...(section.subcategories || [])].sort(
+        (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+      ),
+    [section.subcategories],
+  )
 
   const { total: secTotal, checked: secChecked } = sectionItemTotals(section)
   const showSecProgress = secTotal > 0
@@ -584,6 +599,15 @@ function SectionCard({
     } catch {
       setSaveErrors(e => ({ ...e, [itemId]: true }))
     }
+  }
+
+  const handleQuickSectionAdd = async () => {
+    const label = quickLabel.trim()
+    if (!label) return
+    setQuickLabel('')
+    const subId = quickSubId.trim() ? quickSubId : null
+    const newId = await onAddItemToSection(section.id, subId, label)
+    if (newId) setNewItemIds(prev => new Set([...prev, newId]))
   }
 
   return (
@@ -646,7 +670,7 @@ function SectionCard({
       >
         <div style={{ overflow: 'hidden' }}>
           <div className="px-[14px] pt-2 pb-[13px] space-y-3">
-            {(section.subcategories || []).map(sub => (
+            {sortedSubs.map(sub => (
               <SubcategoryBlock
                 key={sub.id}
                 sub={sub}
@@ -696,6 +720,43 @@ function SectionCard({
                   </button>
                 </div>
               )}
+            </div>
+
+            <div className="pt-2 border-t border-[rgba(0,0,0,0.06)] space-y-2">
+              <p className="text-11 font-medium text-content-secondary">Quick add</p>
+              <select
+                value={quickSubId}
+                onChange={e => setQuickSubId(e.target.value)}
+                aria-label="Subcategory for quick add"
+                className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+              >
+                <option value="">
+                  {TEMPLATE_MISC_SUBCATEGORY} — default (bottom of section)
+                </option>
+                {sortedSubs.map(sub => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={quickLabel}
+                  onChange={e => setQuickLabel(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleQuickSectionAdd()}
+                  placeholder="Add item…"
+                  className="flex-1 text-13 text-content-primary rounded-input px-3 py-2 bg-white focus:outline-none"
+                  style={{ border: '1px dashed #e0ddd8' }}
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickSectionAdd}
+                  className="text-12 font-medium text-white bg-navy hover:bg-navy-hover rounded-input px-3 py-[7px] flex-shrink-0 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
             </div>
           </div>
         </div>
