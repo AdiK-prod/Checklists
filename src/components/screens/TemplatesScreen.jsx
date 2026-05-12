@@ -7,17 +7,12 @@ import {
   useSensors,
   KeyboardSensor,
   closestCenter,
-  useDroppable,
 } from '@dnd-kit/core'
 import {
   arrayMove,
-  SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
-import { ArrowLeft, ChevronDown, ChevronUp, GripVertical, Plus, Plane, Car, Moon, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Plane, Car, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
@@ -25,9 +20,9 @@ import {
   ensureTemplateMiscSectionDefaultSubcategory,
   DEFAULT_BUCKET_SUBCATEGORY_NAME,
   isDefaultBucketSubcategoryName,
-  isMiscSectionName,
 } from '../../lib/templateLayout'
 import { asArray } from '../../lib/transforms'
+import SectionCard from '../ui/SectionCard'
 
 const ICON_MAP = { Plane, Car, Moon }
 
@@ -75,26 +70,51 @@ function countTemplateSectionItems(sec) {
   return n
 }
 
+/** Shape SectionCard expects (camelCase), from a DB template_sections row */
+function mapTemplateSectionForCard(sec, householdMembers) {
+  const subs = [...asArray(sec.template_subcategories)].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+  )
+  return {
+    id: sec.id,
+    name: sec.name,
+    sectionType: sec.section_type,
+    memberId: sec.member_id,
+    member:
+      sec.section_type === 'person'
+        ? householdMembers.find(m => m.id === sec.member_id) ?? null
+        : null,
+    sortOrder: sec.sort_order,
+    subcategories: subs.map(sub => ({
+      id: sub.id,
+      name: sub.name,
+      sortOrder: sub.sort_order,
+      items: [...asArray(sub.template_items)]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map(it => ({
+          id: it.id,
+          label: it.label,
+          sortOrder: it.sort_order,
+          checked: false,
+          isManuallyAdded: true,
+          savedToTemplate: false,
+        })),
+    })),
+  }
+}
 export default function TemplatesScreen() {
   const { household } = useAuth()
   const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState(null)
-  const [newLabel, setNewLabel] = useState('')
-  const [addTargetSectionId, setAddTargetSectionId] = useState('')
-  const [addTargetSubcategoryId, setAddTargetSubcategoryId] = useState('')
   const [editingNameId, setEditingNameId] = useState(null)
   const [editNameValue, setEditNameValue] = useState('')
   const [members, setMembers] = useState([])
-  const [editingTplSectionId, setEditingTplSectionId] = useState(null)
-  const [tplSectionEditName, setTplSectionEditName] = useState('')
-  const [newSharedCatName, setNewSharedCatName] = useState('')
-  const [newPersonMemberId, setNewPersonMemberId] = useState('')
-  const [newPersonCatName, setNewPersonCatName] = useState('')
-  const [addCategoryOpen, setAddCategoryOpen] = useState(false)
-  const [tplCategoryDraftBySection, setTplCategoryDraftBySection] = useState({})
-  const [tplAddCategoryOpenSectionId, setTplAddCategoryOpenSectionId] = useState(null)
+  const [addSectionOpen, setAddSectionOpen] = useState(false)
+  const [addSectionTab, setAddSectionTab] = useState('shared')
+  const [tplSharedSectionName, setTplSharedSectionName] = useState('')
+  const [tplPersonMemberId, setTplPersonMemberId] = useState('')
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -183,16 +203,10 @@ export default function TemplatesScreen() {
   }, [household?.id])
 
   useEffect(() => {
-    setAddTargetSectionId('')
-    setAddTargetSubcategoryId('')
-    setTplCategoryDraftBySection({})
-    setNewSharedCatName('')
-    setNewPersonMemberId('')
-    setNewPersonCatName('')
-    setEditingTplSectionId(null)
-    setTplSectionEditName('')
-    setAddCategoryOpen(false)
-    setTplAddCategoryOpenSectionId(null)
+    setTplSharedSectionName('')
+    setTplPersonMemberId('')
+    setAddSectionOpen(false)
+    setAddSectionTab('shared')
   }, [openId])
 
   useEffect(() => {
@@ -215,23 +229,6 @@ export default function TemplatesScreen() {
       cancelled = true
     }
   }, [openId, rows, household?.id, mergeTemplateRow])
-
-  useEffect(() => {
-    if (!openId || !addTargetSectionId) {
-      setAddTargetSubcategoryId('')
-      return
-    }
-    const tpl = rows.find(r => r.id === openId)
-    const sec = tpl?.template_sections?.find(s => String(s.id) === String(addTargetSectionId))
-    const subs = [...asArray(sec?.template_subcategories)].sort(
-      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-    )
-    setAddTargetSubcategoryId(prev => {
-      if (!prev) return ''
-      const ok = subs.some(s => String(s.id) === String(prev))
-      return ok ? prev : ''
-    })
-  }, [openId, rows, addTargetSectionId])
 
   async function saveTemplateName(id) {
     const name = editNameValue.trim()
@@ -290,118 +287,161 @@ export default function TemplatesScreen() {
     return newSub.id
   }
 
-  async function addItem(templateId) {
-    const label = newLabel.trim()
-    if (!label) return
+  const appendTemplateItem = useCallback(
+    async (templateId, sectionId, preferredSubcategoryId, label) => {
+      const trimmed = String(label || '').trim()
+      if (!trimmed || !templateId || !sectionId) return null
+      let subId
+      try {
+        subId = await resolveTemplateItemBucketId(
+          templateId,
+          sectionId,
+          preferredSubcategoryId?.trim() ? preferredSubcategoryId : undefined,
+        )
+      } catch (e) {
+        alert(e?.message || 'Could not add item.')
+        return null
+      }
+      const { data: maxRows, error: maxErr } = await supabase
+        .from('template_items')
+        .select('sort_order')
+        .eq('subcategory_id', subId)
+        .order('sort_order', { ascending: false })
+        .limit(1)
+      if (maxErr) {
+        alert(maxErr.message)
+        return null
+      }
+      const maxOrder = maxRows?.[0]?.sort_order ?? 0
 
-    let subId
-    try {
-      subId = await resolveTemplateItemBucketId(
-        templateId,
-        addTargetSectionId,
-        addTargetSubcategoryId,
-      )
-    } catch (e) {
-      alert(e?.message || 'Could not add item to the template.')
-      return
+      const { data: ins, error } = await supabase
+        .from('template_items')
+        .insert({
+          subcategory_id: subId,
+          label: trimmed,
+          sort_order: maxOrder + 1,
+        })
+        .select('id')
+        .single()
+
+      if (error) {
+        alert(error.message)
+        return null
+      }
+      await mergeTemplateRow(templateId)
+      return ins?.id ?? null
+    },
+    [mergeTemplateRow],
+  )
+
+  async function addTemplateCategory(sectionId, name) {
+    const trimmed = String(name || '').trim()
+    if (!trimmed || !openId) return null
+    const tpl = rows.find(r => r.id === openId)
+    const sec = tpl?.template_sections?.find(s => s.id === sectionId)
+    if (!sec) return null
+    const subs = asArray(sec.template_subcategories)
+    const maxSo = subs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { data, error } = await supabase
+      .from('template_subcategories')
+      .insert({
+        section_id: sectionId,
+        name: trimmed,
+        sort_order: maxSo + 1,
+      })
+      .select('id')
+      .single()
+    if (error) {
+      alert(error.message)
+      return null
     }
+    await mergeTemplateRow(openId)
+    return data?.id ?? null
+  }
 
-    const { data: maxRows, error: maxErr } = await supabase
-      .from('template_items')
-      .select('sort_order')
-      .eq('subcategory_id', subId)
-      .order('sort_order', { ascending: false })
-      .limit(1)
-    if (maxErr) {
-      alert(maxErr.message)
-      return
+  async function renameTemplateCategoryRow(categoryId, newName) {
+    const trimmed = String(newName || '').trim()
+    if (!trimmed) return
+    const { error } = await supabase
+      .from('template_subcategories')
+      .update({ name: trimmed })
+      .eq('id', categoryId)
+    if (error) {
+      alert(error.message)
+      throw error
     }
-    const maxOrder = maxRows?.[0]?.sort_order ?? 0
+    await mergeTemplateRow(openId)
+  }
 
-    const { error } = await supabase.from('template_items').insert({
-      subcategory_id: subId,
-      label,
-      sort_order: maxOrder + 1,
+  async function removeTemplateCategoryRow(categoryId) {
+    const { error } = await supabase.from('template_subcategories').delete().eq('id', categoryId)
+    if (error) {
+      alert(error.message)
+      throw error
+    }
+    await mergeTemplateRow(openId)
+  }
+
+  async function updateTemplateSectionName(sectionId, name) {
+    const trimmed = String(name || '').trim()
+    if (!trimmed) return
+    const { error } = await supabase.from('template_sections').update({ name: trimmed }).eq('id', sectionId)
+    if (error) {
+      alert(error.message)
+      throw error
+    }
+    await mergeTemplateRow(openId)
+  }
+
+  async function addEmptySharedTemplateSection(templateId) {
+    const name = tplSharedSectionName.trim()
+    if (!name) return
+    const tpl = rows.find(r => r.id === templateId)
+    const secs = tpl?.template_sections || []
+    const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { error } = await supabase.from('template_sections').insert({
+      template_id: templateId,
+      section_type: 'shared',
+      name,
+      member_id: null,
+      sort_order: maxSo + 1,
     })
     if (error) {
       alert(error.message)
       return
     }
-    setNewLabel('')
+    setTplSharedSectionName('')
     await mergeTemplateRow(templateId)
   }
 
-  async function addTemplateSharedCategory(templateId) {
-    const name = newSharedCatName.trim()
-    if (!name) return
-    const tpl = rows.find(r => r.id === templateId)
-    const secs = tpl?.template_sections || []
-    const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { data: secRow, error } = await supabase
-      .from('template_sections')
-      .insert({
-        template_id: templateId,
-        section_type: 'shared',
-        name,
-        member_id: null,
-        sort_order: maxSo + 1,
-      })
-      .select('id')
-      .single()
-    if (error) {
-      alert(error.message)
+  async function addEmptyPersonTemplateSection(templateId) {
+    if (!tplPersonMemberId) {
+      alert('Select a household member who is not already in this template.')
       return
     }
-    setNewSharedCatName('')
-    await mergeTemplateRow(templateId)
-  }
-
-  async function addTemplatePersonCategory(templateId) {
-    const memberId = newPersonMemberId
-    if (!memberId) {
-      alert('Select a household member.')
-      return
-    }
-    const tpl = rows.find(r => r.id === templateId)
-    const name =
-      newPersonCatName.trim() || members.find(m => m.id === memberId)?.name || ''
+    const m = members.find(x => x.id === tplPersonMemberId)
+    const name = m?.name?.trim()
     if (!name) return
-    if (tpl?.template_sections?.some(s => s.section_type === 'person' && s.member_id === memberId)) {
+    const tpl = rows.find(r => r.id === templateId)
+    if (tpl?.template_sections?.some(s => s.section_type === 'person' && s.member_id === tplPersonMemberId)) {
       alert('This person already has a section in this template.')
       return
     }
     const secs = tpl?.template_sections || []
     const maxSo = secs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { data: secRow, error } = await supabase
-      .from('template_sections')
-      .insert({
-        template_id: templateId,
-        section_type: 'person',
-        name,
-        member_id: memberId,
-        sort_order: maxSo + 1,
-      })
-      .select('id')
-      .single()
+    const { error } = await supabase.from('template_sections').insert({
+      template_id: templateId,
+      section_type: 'person',
+      name,
+      member_id: tplPersonMemberId,
+      sort_order: maxSo + 1,
+    })
     if (error) {
       alert(error.message)
       return
     }
-    setNewPersonCatName('')
-    setNewPersonMemberId('')
+    setTplPersonMemberId('')
     await mergeTemplateRow(templateId)
-  }
-
-  async function saveTplSectionName(sectionId) {
-    const name = tplSectionEditName.trim()
-    if (!name) return
-    const { error } = await supabase.from('template_sections').update({ name }).eq('id', sectionId)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setEditingTplSectionId(null)
-    await mergeTemplateRow(openId)
   }
 
   async function removeTemplateSection(sec) {
@@ -415,15 +455,10 @@ export default function TemplatesScreen() {
     await mergeTemplateRow(openId)
   }
 
-  async function removeTemplateCategory(sub, sec) {
-    const n = asArray(sub.template_items).length
-    if (!window.confirm(`Remove category "${sub.name}" and all ${n} item(s) inside?`)) return
-    const { error } = await supabase.from('template_subcategories').delete().eq('id', sub.id)
-    if (error) {
-      alert(error.message)
-      return
-    }
-    await mergeTemplateRow(openId)
+  async function removeTemplateSectionById(sectionId) {
+    const tpl = rows.find(r => r.id === openId)
+    const sec = tpl?.template_sections?.find(s => s.id === sectionId)
+    if (sec) await removeTemplateSection(sec)
   }
 
   async function removeTemplateItem(itemId) {
@@ -573,39 +608,6 @@ export default function TemplatesScreen() {
     moveTemplateItem(tpl, active.id, over.id)
   }
 
-  async function addTemplateCategoryRow(sectionId, templateId) {
-    const name = (tplCategoryDraftBySection[sectionId] || '').trim()
-    if (!name) return
-    const tpl = rows.find(r => r.id === templateId)
-    const sec = tpl?.template_sections?.find(s => s.id === sectionId)
-    const subs = asArray(sec?.template_subcategories)
-    const maxSo = subs.reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
-    const { error } = await supabase.from('template_subcategories').insert({
-      section_id: sectionId,
-      name,
-      sort_order: maxSo + 1,
-    })
-    if (error) {
-      alert(error.message)
-      return
-    }
-    setTplCategoryDraftBySection(prev => ({ ...prev, [sectionId]: '' }))
-    setTplAddCategoryOpenSectionId(null)
-    await mergeTemplateRow(templateId)
-  }
-
-  function templateCategoryTargets(tpl) {
-    const secs = [...(tpl.template_sections || [])].sort(
-      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-    )
-    const shared = secs.filter(s => s.section_type === 'shared')
-    const persons = secs.filter(s => s.section_type === 'person')
-    const misc = shared.filter(s => isMiscSectionName(s.name))
-    const nonMisc = shared.filter(s => !isMiscSectionName(s.name))
-    const ordered = [...nonMisc, ...misc, ...persons]
-    return ordered.filter(s => !isMiscSectionName(s.name))
-  }
-
   return (
     <div className="bg-page h-[100dvh] max-h-[100dvh] flex flex-col overflow-hidden">
       <div className="flex-none flex items-center gap-2 px-4 pt-4 pb-3 border-b border-[rgba(0,0,0,0.06)]">
@@ -636,7 +638,6 @@ export default function TemplatesScreen() {
               const Icon = ICON_MAP[tpl.icon] || Plane
               const expanded = openId === tpl.id
               const itemTotal = countTemplateItems(tpl)
-              const subOpts = templateCategoryTargets(tpl)
 
               return (
                 <div
@@ -709,338 +710,167 @@ export default function TemplatesScreen() {
                         </button>
                       )}
 
-                      {(tpl.template_sections || []).map(sec => (
-                        <div
-                          key={sec.id}
-                          className="space-y-2 rounded-input p-2"
-                          style={{ border: '0.5px solid rgba(0,0,0,0.06)' }}
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            {editingTplSectionId === sec.id ? (
-                              <div className="flex flex-1 flex-wrap gap-2 items-center min-w-0">
-                                <input
-                                  value={tplSectionEditName}
-                                  onChange={e => setTplSectionEditName(e.target.value)}
-                                  onKeyDown={e => e.key === 'Enter' && saveTplSectionName(sec.id)}
-                                  className="flex-1 min-w-[8rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => saveTplSectionName(sec.id)}
-                                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5"
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingTplSectionId(null)}
-                                  className="text-12 text-content-secondary px-2"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            ) : (
-                              <>
-                                <div className="min-w-0">
-                                  <p className="text-12 font-medium text-content-primary">{sec.name}</p>
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingTplSectionId(sec.id)
-                                      setTplSectionEditName(sec.name)
-                                    }}
-                                    className="text-11 bg-transparent border-0 cursor-pointer p-0"
-                                    style={{ color: '#2d6fb5' }}
-                                  >
-                                    Rename
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeTemplateSection(sec)}
-                                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                          {(sec.template_subcategories || []).map(sub => {
-                            const sortedTplItems = [...asArray(sub.template_items)].sort(
-                              (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-                            )
-                            const itemIds = sortedTplItems.map(it => it.id)
-                            return (
-                              <div key={sub.id} className="pl-2 border-l-2 border-[#e8e4dc]">
-                                <div className="flex items-start justify-between gap-2 mb-1">
-                                  <p
-                                    className="font-medium flex-1 min-w-0"
-                                    style={{
-                                      fontSize: 11,
-                                      color: '#6b6b6b',
-                                      letterSpacing: '0.06em',
-                                      textTransform: 'uppercase',
-                                    }}
-                                  >
-                                    {sub.name}
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeTemplateCategory(sub, sec)}
-                                    className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0 flex-shrink-0"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                                {sortedTplItems.length === 0 ? (
-                                  <TemplateSubcategoryEmptyDrop subId={sub.id}>
-                                    <ul className="space-y-0">
-                                      <li className="text-11 italic list-none py-1" style={{ color: '#9a9a9a' }}>
-                                        No items yet
-                                      </li>
-                                    </ul>
-                                  </TemplateSubcategoryEmptyDrop>
-                                ) : (
-                                  <>
-                                    <SortableContext
-                                      items={itemIds}
-                                      strategy={verticalListSortingStrategy}
-                                    >
-                                      <ul className="space-y-0">
-                                        {sortedTplItems.map((it, idx) => (
-                                          <SortableTemplateItemRow
-                                            key={it.id}
-                                            item={it}
-                                            showBorder={idx < sortedTplItems.length - 1}
-                                            onRemove={() => removeTemplateItem(it.id)}
-                                          />
-                                        ))}
-                                      </ul>
-                                    </SortableContext>
-                                    <TemplateSubcategoryTailDrop subId={sub.id} />
-                                  </>
-                                )}
-                              </div>
-                            )
-                          })}
+                      {(() => {
+                        const usedMemberIds = new Set()
+                        for (const s of tpl.template_sections || []) {
+                          if (s.section_type === 'person' && s.member_id) {
+                            usedMemberIds.add(s.member_id)
+                          }
+                        }
+                        const availableForPerson = members.filter(m => !usedMemberIds.has(m.id))
+                        const sortedSections = [...(tpl.template_sections || [])].sort(
+                          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+                        )
+                        return (
+                          <>
+                            {sortedSections.map(sec => (
+                              <SectionCard
+                                key={sec.id}
+                                mode="template"
+                                workingTemplateId={tpl.id}
+                                section={mapTemplateSectionForCard(sec, members)}
+                                variant={sec.section_type === 'shared' ? 'shared' : 'person'}
+                                householdMembers={members}
+                                onAddCategory={addTemplateCategory}
+                                onRenameCategory={renameTemplateCategoryRow}
+                                onRemoveCategory={removeTemplateCategoryRow}
+                                quickAddTemplateItem={appendTemplateItem}
+                                onRemoveItem={removeTemplateItem}
+                                onRenameSectionHeader={updateTemplateSectionName}
+                                onRemoveSectionCard={removeTemplateSectionById}
+                              />
+                            ))}
 
-                          <div className="pt-1">
-                            {tplAddCategoryOpenSectionId === sec.id ? (
-                              <div className="flex gap-2 items-center flex-wrap">
-                                <input
-                                  value={tplCategoryDraftBySection[sec.id] || ''}
-                                  onChange={e =>
-                                    setTplCategoryDraftBySection(prev => ({
-                                      ...prev,
-                                      [sec.id]: e.target.value,
-                                    }))
-                                  }
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') addTemplateCategoryRow(sec.id, tpl.id)
-                                    if (e.key === 'Escape') {
-                                      setTplAddCategoryOpenSectionId(null)
-                                      setTplCategoryDraftBySection(prev => ({ ...prev, [sec.id]: '' }))
-                                    }
-                                  }}
-                                  placeholder="Category name"
-                                  autoComplete="off"
-                                  className="flex-1 min-w-[10rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => addTemplateCategoryRow(sec.id, tpl.id)}
-                                  className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
-                                >
-                                  Add
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTplAddCategoryOpenSectionId(null)
-                                    setTplCategoryDraftBySection(prev => ({ ...prev, [sec.id]: '' }))
-                                  }}
-                                  className="flex-shrink-0 p-1.5 rounded-input border-0 bg-transparent text-content-hint cursor-pointer inline-flex items-center justify-center"
-                                  aria-label="Cancel adding category"
-                                >
-                                  <X size={18} strokeWidth={2} />
-                                </button>
-                              </div>
-                            ) : (
+                            <div
+                              className="bg-white rounded-card overflow-hidden"
+                              style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+                            >
                               <button
                                 type="button"
-                                onClick={() => setTplAddCategoryOpenSectionId(sec.id)}
-                                className="text-12 font-medium bg-transparent border-0 cursor-pointer p-0"
-                                style={{ color: '#2d6fb5' }}
+                                onClick={() => setAddSectionOpen(o => !o)}
+                                aria-expanded={addSectionOpen}
+                                className="w-full flex items-center gap-2 px-3 py-3 text-left"
                               >
-                                + Add category
-                              </button>
-                            )}
-                          </div>
-
-                        </div>
-                      ))}
-
-                      <div
-                        className="rounded-input bg-page overflow-hidden"
-                        style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setAddCategoryOpen(o => !o)}
-                          aria-expanded={addCategoryOpen}
-                          className="w-full flex items-center gap-2 px-3 py-2.5 text-left bg-page"
-                        >
-                          <span className="flex-1 text-11 font-medium uppercase tracking-[0.08em] text-content-secondary">
-                            Add section
-                          </span>
-                          <ChevronDown
-                            size={18}
-                            className="text-content-hint flex-shrink-0"
-                            style={{
-                              transition: 'transform 200ms ease',
-                              transform: addCategoryOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                            }}
-                          />
-                        </button>
-                        <div
-                          style={{
-                            display: 'grid',
-                            transition: 'grid-template-rows 250ms ease',
-                            gridTemplateRows: addCategoryOpen ? '1fr' : '0fr',
-                          }}
-                        >
-                          <div style={{ overflow: 'hidden' }}>
-                            <div className="px-3 pb-3 pt-1 space-y-3 border-t border-[rgba(0,0,0,0.06)]">
-                              <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Shared section</p>
-                                <div className="flex gap-2">
-                                  <input
-                                    value={newSharedCatName}
-                                    onChange={e => setNewSharedCatName(e.target.value)}
-                                    onKeyDown={e =>
-                                      e.key === 'Enter' && addTemplateSharedCategory(tpl.id)
-                                    }
-                                    placeholder="Section name (e.g. Documents, Health)"
-                                    className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => addTemplateSharedCategory(tpl.id)}
-                                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
-                                  >
-                                    Add
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="space-y-2">
-                                <p className="text-12 text-content-primary">Person section</p>
-                                <select
-                                  value={newPersonMemberId}
-                                  onChange={e => {
-                                    const id = e.target.value
-                                    setNewPersonMemberId(id)
-                                    const m = members.find(x => x.id === id)
-                                    if (m) setNewPersonCatName(m.name)
-                                  }}
-                                  className="w-full text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
+                                <span
+                                  className="flex-1 text-11 font-medium uppercase text-content-secondary"
+                                  style={{ letterSpacing: '0.07em' }}
                                 >
-                                  <option value="">Select household member…</option>
-                                  {members.map(m => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.name}
-                                    </option>
-                                  ))}
-                                </select>
-                                <div className="flex gap-2">
-                                  <input
-                                    value={newPersonCatName}
-                                    onChange={e => setNewPersonCatName(e.target.value)}
-                                    onKeyDown={e =>
-                                      e.key === 'Enter' && addTemplatePersonCategory(tpl.id)
-                                    }
-                                    placeholder={
-                                      members.find(m => m.id === newPersonMemberId)?.name ||
-                                      'Traveller name'
-                                    }
-                                    className="flex-1 text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => addTemplatePersonCategory(tpl.id)}
-                                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 flex-shrink-0"
+                                  ADD SECTION
+                                </span>
+                                <ChevronDown
+                                  size={18}
+                                  className="text-content-hint flex-shrink-0"
+                                  style={{
+                                    transition: 'transform 200ms ease',
+                                    transform: addSectionOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                  }}
+                                />
+                              </button>
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  transition: 'grid-template-rows 250ms ease',
+                                  gridTemplateRows: addSectionOpen ? '1fr' : '0fr',
+                                }}
+                              >
+                                <div style={{ overflow: 'hidden' }}>
+                                  <div
+                                    className="px-3 pb-3 border-t border-[rgba(0,0,0,0.06)]"
+                                    style={{ backgroundColor: '#f8f7f4' }}
                                   >
-                                    Add
-                                  </button>
+                                    <div className="flex gap-2 pt-3 mb-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => setAddSectionTab('shared')}
+                                        className="text-12 font-medium rounded-input px-3 py-1.5 border border-transparent"
+                                        style={
+                                          addSectionTab === 'shared'
+                                            ? {
+                                                backgroundColor: '#fff',
+                                                borderColor: '#e0ddd8',
+                                                color: '#1a1a1a',
+                                              }
+                                            : { backgroundColor: 'transparent', color: '#6b6b6b' }
+                                        }
+                                      >
+                                        Shared section
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAddSectionTab('person')}
+                                        className="text-12 font-medium rounded-input px-3 py-1.5 border border-transparent"
+                                        style={
+                                          addSectionTab === 'person'
+                                            ? {
+                                                backgroundColor: '#fff',
+                                                borderColor: '#e0ddd8',
+                                                color: '#1a1a1a',
+                                              }
+                                            : { backgroundColor: 'transparent', color: '#6b6b6b' }
+                                        }
+                                      >
+                                        Person section
+                                      </button>
+                                    </div>
+
+                                    {addSectionTab === 'shared' ? (
+                                      <div className="space-y-3">
+                                        <input
+                                          type="text"
+                                          value={tplSharedSectionName}
+                                          onChange={e => setTplSharedSectionName(e.target.value)}
+                                          onKeyDown={e =>
+                                            e.key === 'Enter' && addEmptySharedTemplateSection(tpl.id)
+                                          }
+                                          placeholder="Section name (e.g. Health, Snacks)"
+                                          className="w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => addEmptySharedTemplateSection(tpl.id)}
+                                          className="w-full text-12 font-medium text-white bg-navy hover:bg-navy-hover rounded-input px-3 py-2.5"
+                                        >
+                                          + Add section
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-3">
+                                        <select
+                                          value={tplPersonMemberId}
+                                          onChange={e => setTplPersonMemberId(e.target.value)}
+                                          disabled={availableForPerson.length === 0}
+                                          className={`w-full text-13 rounded-input px-3 py-2 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy${
+                                            availableForPerson.length === 0 ? ' opacity-60 cursor-not-allowed' : ''
+                                          }`}
+                                        >
+                                          <option value="">
+                                            {availableForPerson.length === 0
+                                              ? 'Everyone already has a section'
+                                              : 'Select household member…'}
+                                          </option>
+                                          {availableForPerson.map(m => (
+                                            <option key={m.id} value={m.id}>
+                                              {m.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          onClick={() => addEmptyPersonTemplateSection(tpl.id)}
+                                          disabled={availableForPerson.length === 0}
+                                          className="w-full text-12 font-medium text-white bg-navy hover:bg-navy-hover rounded-input px-3 py-2.5 disabled:opacity-50"
+                                        >
+                                          + Add section
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div
-                        className="rounded-input bg-page p-2 space-y-2"
-                        style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
-                      >
-                        <input
-                          value={newLabel}
-                          onChange={e => setNewLabel(e.target.value)}
-                          placeholder="New item"
-                          className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
-                        />
-                        <label className="block text-11 text-content-secondary">Section</label>
-                        <select
-                          value={addTargetSectionId}
-                          onChange={e => setAddTargetSectionId(e.target.value)}
-                          className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
-                        >
-                          <option value="">Misc. — add to bottom of shared items</option>
-                          {subOpts.map(s => (
-                            <option key={s.id} value={String(s.id)}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                        {addTargetSectionId ? (
-                          <>
-                            <label className="block text-11 text-content-secondary">
-                              Category (optional)
-                            </label>
-                            <select
-                              value={addTargetSubcategoryId}
-                              onChange={e => setAddTargetSubcategoryId(e.target.value)}
-                              className="w-full rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13 bg-white"
-                            >
-                              <option value="">
-                                Section default ({DEFAULT_BUCKET_SUBCATEGORY_NAME})
-                              </option>
-                              {(() => {
-                                const tsec = (tpl.template_sections || []).find(
-                                  s => String(s.id) === String(addTargetSectionId),
-                                )
-                                return [...asArray(tsec?.template_subcategories)]
-                                  .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-                                  .map(s => (
-                                    <option key={s.id} value={String(s.id)}>
-                                      {s.name}
-                                    </option>
-                                  ))
-                              })()}
-                            </select>
                           </>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => addItem(tpl.id)}
-                          disabled={!newLabel.trim()}
-                          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-button border border-[#e0ddd8] text-13 font-medium text-navy bg-white disabled:opacity-50"
-                        >
-                          <Plus size={16} />
-                          Add to template
-                        </button>
-                      </div>
+                        )
+                      })()}
                     </div>
                     </DndContext>
                   )}
@@ -1051,85 +881,5 @@ export default function TemplatesScreen() {
         )}
       </div>
     </div>
-  )
-}
-
-function TemplateSubcategoryEmptyDrop({ subId, children }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `drop:${subId}` })
-  return (
-    <div
-      ref={setNodeRef}
-      className="rounded-input mb-1 px-1 -mx-1"
-      style={{
-        minHeight: 36,
-        outline: isOver ? '2px dashed #2d6fb5' : undefined,
-        outlineOffset: 2,
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
-function TemplateSubcategoryTailDrop({ subId }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `drop-end:${subId}` })
-  return (
-    <div
-      ref={setNodeRef}
-      className="h-3 rounded-input w-full shrink-0"
-      style={{ backgroundColor: isOver ? 'rgba(45,111,181,0.12)' : undefined }}
-      aria-hidden
-    />
-  )
-}
-
-function SortableTemplateItemRow({ item, showBorder, onRemove }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: item.id })
-
-  const dndStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : undefined,
-    zIndex: isDragging ? 2 : undefined,
-    position: isDragging ? 'relative' : undefined,
-  }
-
-  return (
-    <li
-      ref={setNodeRef}
-      style={{
-        ...dndStyle,
-        ...(showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.04)' } : {}),
-      }}
-      className="flex items-center gap-2 text-13 py-1 list-none"
-    >
-      <button
-        type="button"
-        ref={setActivatorNodeRef}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
-        aria-label="Drag to reorder"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={14} style={{ opacity: 0.35 }} />
-      </button>
-      <span className="flex-1 min-w-0 text-content-primary">{item.label}</span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 leading-none"
-        aria-label="Remove item"
-      >
-        ×
-      </button>
-    </li>
   )
 }

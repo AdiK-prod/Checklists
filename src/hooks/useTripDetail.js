@@ -446,6 +446,44 @@ export function useTripDetail(tripId) {
     return sr.id
   }, [tripId])
 
+  const renameChecklistSubcategory = useCallback(async (subcategoryId, newName) => {
+    const trimmed = String(newName || '').trim()
+    if (!trimmed || !subcategoryId) return
+
+    const { error } = await supabase
+      .from('checklist_subcategories')
+      .update({ name: trimmed })
+      .eq('id', subcategoryId)
+
+    if (error) {
+      console.error(error)
+      throw error
+    }
+
+    const prevRow = rawSubByIdRef.current.get(subcategoryId)
+    if (prevRow) {
+      rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(subcategoryId, {
+        ...prevRow,
+        name: trimmed,
+      })
+    }
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(sec => ({
+        ...sec,
+        subcategories: sec.subcategories.map(sub =>
+          sub.id === subcategoryId ? { ...sub, name: trimmed } : sub,
+        ),
+      }))
+      return {
+        ...prev,
+        sections,
+        aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+      }
+    })
+  }, [])
+
   const addItemToSection = useCallback(
     async (targetSectionId, label) => {
       if (!tripId) return null
@@ -525,7 +563,7 @@ export function useTripDetail(tripId) {
             })
           }
         } catch (e) {
-          console.error('ensure Misc. category bucket:', e?.message, e)
+          console.error('ensure default Items bucket (Misc.):', e?.message, e)
           return null
         }
         return insertChecklistItem(subcategoryId, trimmed)
@@ -974,6 +1012,7 @@ export function useTripDetail(tripId) {
     quickAddItem,
     removeChecklistItem,
     removeSubcategory,
+    renameChecklistSubcategory,
     saveToTemplate,
     reorderItems,
     moveChecklistItem,
