@@ -56,7 +56,14 @@ export function fallbackMemberFromSection(section) {
 }
 
 function resolveDisplayMember(section, householdMembers) {
-  if (section.member) return section.member
+  if (section.member) {
+    const m = section.member
+    return {
+      ...m,
+      initials: m.initials || initialsFromName(m.name || ''),
+      avatarColour: m.avatarColour || { bg: '#f1efe8', text: '#6b6b6b' },
+    }
+  }
   if (section.memberId && Array.isArray(householdMembers)) {
     const m = householdMembers.find(x => x.id === section.memberId)
     if (m) {
@@ -832,10 +839,18 @@ export default function SectionCard({
       className="bg-white rounded-card mb-[10px] overflow-hidden"
       style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
     >
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center gap-2.5 px-[14px] py-[13px]"
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setExpanded(v => !v)
+          }
+        }}
+        className="w-full flex items-center gap-2.5 px-[14px] py-[13px] cursor-pointer text-left"
         style={headerDividerStyle}
       >
         {variant === 'shared' && SharedIc ? (
@@ -880,7 +895,7 @@ export default function SectionCard({
             transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
           }}
         />
-      </button>
+      </div>
 
       {slot === 'cat-add' ? (
         <div className="px-[14px] py-2" style={{ borderBottom: '0.5px solid rgba(0,0,0,0.08)' }}>
