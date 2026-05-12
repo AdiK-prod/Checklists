@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip } from '../lib/tripService'
 import {
   normalizeTripDetail,
   buildSectionsTree,
@@ -92,6 +93,7 @@ export function useTripDetail(tripId) {
   const [trip, setTrip] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   const rawItemsRef = useRef([])
   const rawSubByIdRef = useRef(new Map())
@@ -200,6 +202,18 @@ export function useTripDetail(tripId) {
     return () => {
       cancelled = true
     }
+  }, [tripId, reloadNonce])
+
+  const rebuildChecklist = useCallback(async () => {
+    if (!tripId) return
+    await rebuildTripChecklistFromTemplate(tripId)
+    setReloadNonce(n => n + 1)
+  }, [tripId])
+
+  const addStarterChecklist = useCallback(async () => {
+    if (!tripId) return
+    await ensureMinimalChecklistForTrip(tripId)
+    setReloadNonce(n => n + 1)
   }, [tripId])
 
   const toggleItem = useCallback(async itemId => {
@@ -439,5 +453,7 @@ export function useTripDetail(tripId) {
     removeSubcategory,
     saveToTemplate,
     reorderItems,
+    rebuildChecklist,
+    addStarterChecklist,
   }
 }

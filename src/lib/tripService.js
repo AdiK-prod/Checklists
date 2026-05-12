@@ -30,7 +30,20 @@ export async function fetchTemplateTree(client, templateId) {
     .order('sort_order')
 
   if (e1) throw e1
-  if (!sections?.length) return []
+  if (!sections?.length) {
+    const { data: tpl, error: te } = await client
+      .from('templates')
+      .select('id')
+      .eq('id', templateId)
+      .maybeSingle()
+    if (te) throw te
+    if (tpl) {
+      throw new Error(
+        'This packing template has no sections. Open Settings → Pack templates to repair, or choose another template.',
+      )
+    }
+    throw new Error('Template not found or you do not have access.')
+  }
 
   const sectionIds = sections.map(s => s.id)
   const { data: subcats, error: e2 } = await client
@@ -166,6 +179,80 @@ async function createChecklistFromTemplate(client, tripId, templateId, travellin
   }
 
   if (itemRows.length) await insertChecklistChunks(itemRows)
+}
+
+/**
+ * One shared section + one subcategory so the trip is usable if template copy failed.
+ */
+export async function ensureMinimalChecklistForTrip(tripId) {
+  const { count, error: cErr } = await supabase
+    .from('checklist_sections')
+    .select('id', { count: 'exact', head: true })
+    .eq('trip_id', tripId)
+  if (cErr) throw cErr
+  if ((count ?? 0) > 0) return
+
+  const { data: section, error: sErr } = await supabase
+    .from('checklist_sections')
+    .insert({
+      trip_id: tripId,
+      section_type: 'shared',
+      name: 'Essentials',
+      member_id: null,
+      sort_order: 0,
+    })
+    .select('id')
+    .single()
+  if (sErr) throw sErr
+
+  const { error: subErr } = await supabase.from('checklist_subcategories').insert({
+    section_id: section.id,
+    name: 'Items',
+    sort_order: 0,
+    is_manually_added: true,
+  })
+  if (subErr) throw subErr
+}
+
+/**
+ * Remove checklist rows for the trip and copy from template again.
+ * Falls back to a minimal Essentials section if the template is empty or inaccessible.
+ */
+export async function rebuildTripChecklistFromTemplate(tripId) {
+  const { data: trip, error: tErr } = await supabase
+    .from('trips')
+    .select('id, template_id')
+    .eq('id', tripId)
+    .single()
+  if (tErr) throw tErr
+
+  const { data: tt, error: ttErr } = await supabase
+    .from('trip_travellers')
+    .select('member_id')
+    .eq('trip_id', tripId)
+  if (ttErr) throw ttErr
+  const memberIds = (tt || []).map(r => r.member_id)
+
+  const { error: delErr } = await supabase.from('checklist_sections').delete().eq('trip_id', tripId)
+  if (delErr) throw delErr
+
+  if (trip.template_id) {
+    try {
+      await createChecklistFromTemplate(supabase, tripId, trip.template_id, memberIds)
+    } catch (e) {
+      console.warn('[rebuildTripChecklist] template copy failed', e)
+    }
+  }
+
+  const { count, error: cntErr } = await supabase
+    .from('checklist_sections')
+    .select('id', { count: 'exact', head: true })
+    .eq('trip_id', tripId)
+  if (cntErr) throw cntErr
+
+  if ((count ?? 0) === 0) {
+    await ensureMinimalChecklistForTrip(tripId)
+  }
 }
 
 function suggestionIsShared(s) {
@@ -363,6 +450,16 @@ export async function createTripFromWizard(opts) {
   if (ttErr) throw ttErr
 
   await createChecklistFromTemplate(supabase, tripId, templateId, memberIds)
+
+  const { count: secCount, error: scErr } = await supabase
+    .from('checklist_sections')
+    .select('id', { count: 'exact', head: true })
+    .eq('trip_id', tripId)
+  if (scErr) throw scErr
+  if ((secCount ?? 0) === 0) {
+    await ensureMinimalChecklistForTrip(tripId)
+  }
+
   await insertAcceptedAiSuggestions(supabase, tripId, memberIds, suggestions)
 
   const { error: logErr } = await supabase.from('ai_suggestions_log').insert({

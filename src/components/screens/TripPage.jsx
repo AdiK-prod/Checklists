@@ -129,9 +129,12 @@ export default function TripPage() {
     removeSubcategory,
     saveToTemplate,
     reorderItems,
+    rebuildChecklist,
+    addStarterChecklist,
   } = useTripDetail(tripId)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
+  const [recovering, setRecovering] = useState(false)
 
   const isInitialMount = useRef(true)
   const [animatedProgress, setAnimatedProgress] = useState(0)
@@ -253,6 +256,30 @@ export default function TripPage() {
   )
   const sharedSections = sectionsSorted.filter(s => s.sectionType === 'shared')
   const personSections = sectionsSorted.filter(s => s.sectionType === 'person')
+
+  async function handleRebuildChecklist() {
+    setRecovering(true)
+    try {
+      await rebuildChecklist()
+    } catch (e) {
+      console.error(e)
+      window.alert(e?.message || 'Could not rebuild checklist.')
+    } finally {
+      setRecovering(false)
+    }
+  }
+
+  async function handleStarterChecklist() {
+    setRecovering(true)
+    try {
+      await addStarterChecklist()
+    } catch (e) {
+      console.error(e)
+      window.alert(e?.message || 'Could not create starter checklist.')
+    } finally {
+      setRecovering(false)
+    }
+  }
 
   return (
     <div className="bg-page">
@@ -431,6 +458,40 @@ export default function TripPage() {
                   })}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {sectionsSorted.length === 0 && (
+          <div
+            className="bg-white rounded-card p-4 mb-3"
+            style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+          >
+            <p className="text-13 text-content-primary font-medium mb-1">No checklist yet</p>
+            <p className="text-12 text-content-secondary mb-3 leading-relaxed">
+              The packing list was not created for this trip. That usually means the template had no
+              sections in the database, or the hierarchical checklist migration has not been applied
+              to your project yet.
+            </p>
+            <div className="flex flex-col gap-2">
+              {trip.templateId ? (
+                <button
+                  type="button"
+                  disabled={recovering}
+                  onClick={handleRebuildChecklist}
+                  className="w-full py-2.5 rounded-button text-13 font-medium text-white bg-navy hover:bg-navy-hover disabled:opacity-50"
+                >
+                  Rebuild from template
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={recovering}
+                onClick={handleStarterChecklist}
+                className="w-full py-2.5 rounded-button text-13 font-medium border border-[#e0ddd8] bg-page text-navy disabled:opacity-50"
+              >
+                Start with Essentials
+              </button>
             </div>
           </div>
         )}
