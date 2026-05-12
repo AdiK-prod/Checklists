@@ -168,7 +168,7 @@ export default function TripPage() {
       const itemId = active.id
       let subId = null
       let ids = []
-      outer: for (const sec of trip.sections) {
+      outer: for (const sec of trip?.sections ?? []) {
         for (const sub of sec.subcategories) {
           const rowIds = sub.items.map(i => i.id)
           if (rowIds.includes(itemId)) {

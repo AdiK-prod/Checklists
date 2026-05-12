@@ -23,9 +23,13 @@ function hashId(id = '') {
 }
 
 function initialsFromName(name = '') {
-  const parts = name.trim().split(/\s+/)
+  const parts = String(name ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
   if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-  return name.slice(0, 2).toUpperCase()
+  const s = String(name ?? '').trim()
+  return s.slice(0, 2).toUpperCase()
 }
 
 export function normalizeMember(row) {

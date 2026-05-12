@@ -10,9 +10,9 @@ import {
 function updateItemInSections(sections, itemId, patch) {
   return sections.map(sec => ({
     ...sec,
-    subcategories: sec.subcategories.map(sub => ({
+    subcategories: (sec.subcategories || []).map(sub => ({
       ...sub,
-      items: sub.items.map(it => (it.id === itemId ? { ...it, ...patch } : it)),
+      items: (sub.items || []).map(it => (it.id === itemId ? { ...it, ...patch } : it)),
     })),
   }))
 }

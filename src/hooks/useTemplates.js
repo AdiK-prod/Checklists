@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { asArray } from '../lib/transforms'
 
@@ -17,20 +17,19 @@ export function useTemplates(householdId) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!householdId) {
+      setTemplates([])
       setLoading(false)
+      setError(null)
       return
     }
-    let cancelled = false
-
-    async function load() {
-      setLoading(true)
-      setError(null)
-      const { data, error: qErr } = await supabase
-        .from('templates')
-        .select(
-          `
+    setLoading(true)
+    setError(null)
+    const { data, error: qErr } = await supabase
+      .from('templates')
+      .select(
+        `
           *,
           template_sections(
             id,
@@ -46,36 +45,33 @@ export function useTemplates(householdId) {
             )
           )
         `,
-        )
-        .eq('household_id', householdId)
-        .order('created_at')
-
-      if (cancelled) return
-      if (qErr) {
-        setError(qErr)
-        setLoading(false)
-        return
-      }
-      const rows = Array.isArray(data) ? data : []
-      setTemplates(
-        rows.map(t => ({
-          id: t.id,
-          name: t.name,
-          icon: t.icon,
-          itemCount: countTemplateItems(t.template_sections),
-          template_sections: [...asArray(t.template_sections)].sort(
-            (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-          ),
-        })),
       )
-      setLoading(false)
-    }
+      .eq('household_id', householdId)
+      .order('created_at')
 
-    load()
-    return () => {
-      cancelled = true
+    if (qErr) {
+      setError(qErr)
+      setLoading(false)
+      return
     }
+    const rows = Array.isArray(data) ? data : []
+    setTemplates(
+      rows.map(t => ({
+        id: t.id,
+        name: t.name,
+        icon: t.icon,
+        itemCount: countTemplateItems(t.template_sections),
+        template_sections: [...asArray(t.template_sections)].sort(
+          (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+        ),
+      })),
+    )
+    setLoading(false)
   }, [householdId])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   return { templates, loading, error, refetch: load }
 }
