@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTrips } from '../../hooks/useTrips'
 import { useHousehold } from '../../hooks/useHousehold'
+import { useTemplates } from '../../hooks/useTemplates'
+import { useEnsureTemplatesSeeded } from '../../hooks/useEnsureTemplatesSeeded'
 import { isTripPast } from '../../lib/utils'
 import TripCard from '../ui/TripCard'
 import { SkeletonCard } from '../ui/Skeleton'
@@ -11,7 +13,16 @@ export default function Dashboard() {
   const { household } = useAuth()
   const navigate      = useNavigate()
   const { trips, loading, error, deleteTrip, refetch } = useTrips(household?.id)
-  const { members }               = useHousehold(household?.id)
+  const { members, loading: membersLoading } = useHousehold(household?.id)
+  const { templates, loading: templatesLoading, refetch: refetchTemplates } = useTemplates(household?.id)
+  useEnsureTemplatesSeeded(
+    household?.id,
+    members,
+    membersLoading,
+    templates,
+    templatesLoading,
+    refetchTemplates,
+  )
 
   const tripList = Array.isArray(trips) ? trips : []
   const upcoming = tripList.filter(t => !isTripPast(t))

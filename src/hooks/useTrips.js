@@ -17,7 +17,17 @@ export function useTrips(householdId) {
     setError(null)
     const { data, error: qErr } = await supabase
       .from('trips')
-      .select('*, trip_travellers(member_id), checklist_items(id, checked)')
+      .select(
+        `
+        *,
+        trip_travellers(member_id),
+        checklist_sections(
+          checklist_subcategories(
+            checklist_items(id, checked)
+          )
+        )
+      `,
+      )
       .eq('household_id', householdId)
       .order('dates_from', { ascending: true })
 

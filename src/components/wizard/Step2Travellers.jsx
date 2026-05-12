@@ -50,6 +50,9 @@ export default function Step2Travellers({ members, selected, onToggle }) {
       <p className="text-13 text-content-secondary mt-3 text-center">
         {selectedCount} traveller{selectedCount !== 1 ? 's' : ''} · each gets their own checklist
       </p>
+      <p className="text-12 text-content-secondary mt-2 text-center leading-snug max-w-[320px] mx-auto">
+        Shared sections from this template are always included.
+      </p>
     </div>
   )
 }

@@ -1,47 +1,191 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { normalizeTripDetail, asArray, normalizeItem } from '../lib/transforms'
+import {
+  normalizeTripDetail,
+  buildSectionsTree,
+  attachMembersToSections,
+  normalizeMember,
+} from '../lib/transforms'
 
-function maxSortOrderForMember(rawRows, memberId) {
-  return rawRows
-    .filter(r => r.member_id === memberId)
-    .reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0)
+function updateItemInSections(sections, itemId, patch) {
+  return sections.map(sec => ({
+    ...sec,
+    subcategories: sec.subcategories.map(sub => ({
+      ...sub,
+      items: sub.items.map(it => (it.id === itemId ? { ...it, ...patch } : it)),
+    })),
+  }))
+}
+
+async function ensureTemplateSectionForChecklist(templateId, chkSectionRow) {
+  if (chkSectionRow.section_type === 'shared') {
+    const { data: rows, error } = await supabase
+      .from('template_sections')
+      .select('id')
+      .eq('template_id', templateId)
+      .eq('section_type', 'shared')
+      .ilike('name', chkSectionRow.name)
+      .limit(1)
+    if (error) throw error
+    if (rows?.length) return rows[0].id
+  } else {
+    if (chkSectionRow.member_id) {
+      const { data: rows, error } = await supabase
+        .from('template_sections')
+        .select('id')
+        .eq('template_id', templateId)
+        .eq('member_id', chkSectionRow.member_id)
+        .limit(1)
+      if (error) throw error
+      if (rows?.length) return rows[0].id
+    }
+    const { data: rows, error } = await supabase
+      .from('template_sections')
+      .select('id')
+      .eq('template_id', templateId)
+      .eq('section_type', 'person')
+      .ilike('name', chkSectionRow.name)
+      .limit(1)
+    if (error) throw error
+    if (rows?.length) return rows[0].id
+  }
+
+  const { data: ins, error: insErr } = await supabase
+    .from('template_sections')
+    .insert({
+      template_id: templateId,
+      section_type: chkSectionRow.section_type,
+      name: chkSectionRow.name,
+      member_id: chkSectionRow.member_id,
+      sort_order: 999,
+    })
+    .select('id')
+    .single()
+  if (insErr) throw insErr
+  return ins.id
+}
+
+async function ensureTemplateSubcategory(templateSectionId, subName) {
+  const { data: rows, error } = await supabase
+    .from('template_subcategories')
+    .select('id')
+    .eq('section_id', templateSectionId)
+    .ilike('name', subName)
+    .limit(1)
+  if (error) throw error
+  if (rows?.length) return rows[0].id
+
+  const { data: ins, error: insErr } = await supabase
+    .from('template_subcategories')
+    .insert({
+      section_id: templateSectionId,
+      name: subName,
+      sort_order: 999,
+    })
+    .select('id')
+    .single()
+  if (insErr) throw insErr
+  return ins.id
 }
 
 export function useTripDetail(tripId) {
-  const [trip, setTrip]       = useState(null)
+  const [trip, setTrip] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
-  // Keep raw items in a ref for optimistic update mutations
-  const rawItemsRef   = useRef([])
+  const [error, setError] = useState(null)
+
+  const rawItemsRef = useRef([])
+  const rawSubByIdRef = useRef(new Map())
+  const rawSectionByIdRef = useRef(new Map())
   const templateIdRef = useRef(null)
 
   useEffect(() => {
-    if (!tripId) { setLoading(false); return }
+    if (!tripId) {
+      setLoading(false)
+      return
+    }
     let cancelled = false
 
     async function load() {
       setLoading(true)
       setError(null)
       try {
-        const { data, error: qErr } = await supabase
+        const { data: tripData, error: tripErr } = await supabase
           .from('trips')
-          .select(`
-          *,
-          trip_travellers(member_id, household_members(*)),
-          checklist_items(*)
-        `)
+          .select('*, trip_travellers(member_id, household_members(*))')
           .eq('id', tripId)
           .single()
 
         if (cancelled) return
-        if (qErr) {
-          setError(qErr)
+        if (tripErr) {
+          setError(tripErr)
+          setTrip(null)
           return
         }
-        rawItemsRef.current = asArray(data.checklist_items)
-        templateIdRef.current = data.template_id
-        setTrip(normalizeTripDetail(data))
+
+        const [sectionsRes, subcatsRes, itemsRes] = await Promise.all([
+          supabase
+            .from('checklist_sections')
+            .select('*')
+            .eq('trip_id', tripId)
+            .order('sort_order'),
+          supabase
+            .from('checklist_subcategories')
+            .select('*, checklist_sections!inner(trip_id)')
+            .eq('checklist_sections.trip_id', tripId)
+            .order('sort_order'),
+          supabase
+            .from('checklist_items')
+            .select('*, checklist_subcategories!inner(section_id, checklist_sections!inner(trip_id))')
+            .eq('checklist_subcategories.checklist_sections.trip_id', tripId)
+            .order('sort_order'),
+        ])
+
+        if (cancelled) return
+
+        if (sectionsRes.error) {
+          setError(sectionsRes.error)
+          setTrip(null)
+          return
+        }
+        if (subcatsRes.error) {
+          setError(subcatsRes.error)
+          setTrip(null)
+          return
+        }
+        if (itemsRes.error) {
+          setError(itemsRes.error)
+          setTrip(null)
+          return
+        }
+
+        const sections = sectionsRes.data || []
+        const subcats = subcatsRes.data || []
+        const items = itemsRes.data || []
+
+        rawItemsRef.current = items
+        rawSubByIdRef.current = new Map(subcats.map(s => [s.id, s]))
+        rawSectionByIdRef.current = new Map(sections.map(s => [s.id, s]))
+        templateIdRef.current = tripData.template_id
+
+        const { list } = buildSectionsTree(sections, subcats, items)
+
+        const memberList = (tripData.trip_travellers || []).map(t => {
+          const hm = t.household_members
+          if (hm && !Array.isArray(hm) && hm.id) return normalizeMember(hm)
+          const hmRow = Array.isArray(hm) ? hm[0] : hm
+          if (hmRow?.id) return normalizeMember(hmRow)
+          return normalizeMember({
+            id: t.member_id,
+            name: 'Traveller',
+            role: 'parent',
+            age: null,
+          })
+        })
+
+        attachMembersToSections(list, memberList)
+
+        const normalised = normalizeTripDetail(tripData, list)
+        setTrip(normalised)
       } catch (e) {
         if (cancelled) return
         console.error(e)
@@ -53,97 +197,118 @@ export function useTripDetail(tripId) {
     }
 
     load()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [tripId])
 
-  const toggleItem = useCallback(async (memberId, itemId) => {
+  const toggleItem = useCallback(async itemId => {
     const raw = rawItemsRef.current.find(i => i.id === itemId)
     if (!raw) return
     const newChecked = !raw.checked
 
-    // Optimistic update
     rawItemsRef.current = rawItemsRef.current.map(i =>
-      i.id === itemId ? { ...i, checked: newChecked } : i
+      i.id === itemId ? { ...i, checked: newChecked } : i,
     )
-    setTrip(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        checklists: {
-          ...prev.checklists,
-          [memberId]: asArray(prev.checklists[memberId]).map(item =>
-            item.id === itemId ? { ...item, checked: newChecked } : item
-          ),
-        },
-      }
-    })
 
-    await supabase.from('checklist_items').update({ checked: newChecked }).eq('id', itemId)
+    setTrip(prev =>
+      prev ? { ...prev, sections: updateItemInSections(prev.sections, itemId, { checked: newChecked }) } : prev,
+    )
+
+    const { error: uErr } = await supabase.from('checklist_items').update({ checked: newChecked }).eq('id', itemId)
+    if (uErr) console.error(uErr)
   }, [])
 
-  const addItem = useCallback(async (memberId, label) => {
-    if (!tripId) return null
-    const sortBase = maxSortOrderForMember(rawItemsRef.current, memberId)
-    const newRaw = {
-      trip_id:          tripId,
-      member_id:        memberId,
-      label,
-      category:         'Other',
-      checked:          false,
-      is_ai_suggested:  false,
-      is_manually_added: true,
-      saved_to_template: false,
-      sort_order:       sortBase + 1,
-    }
-    const { data, error } = await supabase
-      .from('checklist_items').insert(newRaw).select().single()
-    if (error) {
-      console.error('add checklist item:', error.message, error)
-      return null
-    }
-    if (!data) return null
+  const addItem = useCallback(
+    async (subcategoryId, label) => {
+      if (!tripId) return null
+      const trimmed = String(label || '').trim()
+      if (!trimmed) return null
 
-    rawItemsRef.current = [...rawItemsRef.current, data]
-    setTrip(prev => {
-      if (!prev) return prev
-      const normalized = normalizeItem(data)
-      return {
-        ...prev,
-        checklists: {
-          ...prev.checklists,
-          [memberId]: [...asArray(prev.checklists[memberId]), normalized],
-        },
+      const siblings = rawItemsRef.current.filter(i => i.subcategory_id === subcategoryId)
+      const sortBase = siblings.reduce((m, r) => Math.max(m, Number(r.sort_order) || 0), 0)
+
+      const newRaw = {
+        subcategory_id: subcategoryId,
+        label: trimmed,
+        sort_order: sortBase + 1,
+        checked: false,
+        is_ai_suggested: false,
+        is_manually_added: true,
+        saved_to_template: false,
       }
-    })
-    return data.id
-  }, [tripId])
 
-  const reorderItems = useCallback(async (memberId, orderedIds) => {
+      const { data, error: insErr } = await supabase
+        .from('checklist_items')
+        .insert(newRaw)
+        .select()
+        .single()
+
+      if (insErr) {
+        console.error('add checklist item:', insErr.message, insErr)
+        return null
+      }
+      if (!data) return null
+
+      rawItemsRef.current = [...rawItemsRef.current, data]
+
+      setTrip(prev => {
+        if (!prev) return prev
+        const sections = prev.sections.map(sec => ({
+          ...sec,
+          subcategories: sec.subcategories.map(sub => {
+            if (sub.id !== subcategoryId) return sub
+            const maxSo = sub.items.reduce((m, i) => Math.max(m, Number(i.sortOrder) || 0), 0)
+            const newItem = {
+              id: data.id,
+              subcategoryId: data.subcategory_id,
+              label: data.label,
+              checked: data.checked,
+              isAiSuggested: data.is_ai_suggested,
+              isManuallyAdded: data.is_manually_added,
+              savedToTemplate: data.saved_to_template,
+              sortOrder: data.sort_order ?? maxSo + 1,
+            }
+            return { ...sub, items: [...sub.items, newItem].sort((a, b) => a.sortOrder - b.sortOrder) }
+          }),
+        }))
+        return { ...prev, sections, aiSuggestions: prev.aiSuggestions }
+      })
+
+      return data.id
+    },
+    [tripId],
+  )
+
+  const reorderItems = useCallback(async (subcategoryId, orderedIds) => {
     if (!tripId || !orderedIds.length) return
     const orderMap = new Map(orderedIds.map((id, idx) => [id, (idx + 1) * 10]))
 
     rawItemsRef.current = rawItemsRef.current.map(row => {
       const so = orderMap.get(row.id)
-      if (so != null && row.member_id === memberId) return { ...row, sort_order: so }
+      if (so != null && row.subcategory_id === subcategoryId) return { ...row, sort_order: so }
       return row
     })
 
     setTrip(prev => {
       if (!prev) return prev
-      const list = asArray(prev.checklists[memberId])
-      const byId = new Map(list.map(i => [i.id, i]))
-      const reordered = orderedIds
-        .map(id => {
-          const item = byId.get(id)
-          const so = orderMap.get(id)
-          if (!item || so == null) return null
-          return { ...item, sortOrder: so }
-        })
-        .filter(Boolean)
-      return {
-        ...prev,
-        checklists: { ...prev.checklists, [memberId]: reordered },
-      }
+      const sections = prev.sections.map(sec => ({
+        ...sec,
+        subcategories: sec.subcategories.map(sub => {
+          if (sub.id !== subcategoryId) return sub
+          const byId = new Map(sub.items.map(i => [i.id, i]))
+          const reordered = orderedIds
+            .map(id => {
+              const item = byId.get(id)
+              const so = orderMap.get(id)
+              if (!item || so == null) return null
+              return { ...item, sortOrder: so }
+            })
+            .filter(Boolean)
+          return { ...sub, items: reordered }
+        }),
+      }))
+      return { ...prev, sections }
     })
 
     const results = await Promise.all(
@@ -155,31 +320,92 @@ export function useTripDetail(tripId) {
     if (failed?.error) console.error('reorder checklist items:', failed.error.message)
   }, [tripId])
 
-  const saveToTemplate = useCallback(async (memberId, itemId) => {
+  const addSubcategory = useCallback(
+    async (sectionId, name) => {
+      if (!tripId) return null
+      const trimmed = String(name || '').trim()
+      if (!trimmed) return null
+
+      const subs = [...rawSubByIdRef.current.values()].filter(s => s.section_id === sectionId)
+      const sortBase = subs.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+
+      const { data, error: insErr } = await supabase
+        .from('checklist_subcategories')
+        .insert({
+          section_id: sectionId,
+          name: trimmed,
+          sort_order: sortBase + 1,
+          is_manually_added: true,
+        })
+        .select()
+        .single()
+
+      if (insErr) {
+        console.error(insErr)
+        return null
+      }
+
+      rawSubByIdRef.current = new Map(rawSubByIdRef.current).set(data.id, data)
+
+      setTrip(prev => {
+        if (!prev) return prev
+        const sections = prev.sections.map(sec => {
+          if (sec.id !== sectionId) return sec
+          const newSub = {
+            id: data.id,
+            name: data.name,
+            sortOrder: data.sort_order,
+            isManuallyAdded: data.is_manually_added,
+            items: [],
+          }
+          return { ...sec, subcategories: [...sec.subcategories, newSub] }
+        })
+        return { ...prev, sections }
+      })
+
+      return data.id
+    },
+    [tripId],
+  )
+
+  const removeSubcategory = useCallback(async subcategoryId => {
+    const { error: delErr } = await supabase.from('checklist_subcategories').delete().eq('id', subcategoryId)
+    if (delErr) {
+      console.error(delErr)
+      throw delErr
+    }
+    rawItemsRef.current = rawItemsRef.current.filter(i => i.subcategory_id !== subcategoryId)
+    const nextSubs = new Map(rawSubByIdRef.current)
+    nextSubs.delete(subcategoryId)
+    rawSubByIdRef.current = nextSubs
+
+    setTrip(prev => {
+      if (!prev) return prev
+      const sections = prev.sections.map(sec => ({
+        ...sec,
+        subcategories: sec.subcategories.filter(s => s.id !== subcategoryId),
+      }))
+      return { ...prev, sections }
+    })
+  }, [])
+
+  const saveToTemplate = useCallback(async itemId => {
     const templateId = templateIdRef.current
-    const raw        = rawItemsRef.current.find(i => i.id === itemId)
+    const raw = rawItemsRef.current.find(i => i.id === itemId)
     if (!raw || !templateId) return
 
-    const { data: maxRow, error: maxErr } = await supabase
-      .from('template_items')
-      .select('sort_order')
-      .eq('template_id', templateId)
-      .order('sort_order', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    const subRow = rawSubByIdRef.current.get(raw.subcategory_id)
+    if (!subRow) return
+    const chkSection = rawSectionByIdRef.current.get(subRow.section_id)
+    if (!chkSection) return
 
-    if (maxErr) {
-      console.error('template sort lookup:', maxErr.message)
-      throw maxErr
-    }
-
-    const nextSort = (maxRow?.sort_order ?? 0) + 1
+    const tplSecId = await ensureTemplateSectionForChecklist(templateId, chkSection)
+    const tplSubId = await ensureTemplateSubcategory(tplSecId, subRow.name)
 
     const { error: insErr } = await supabase.from('template_items').insert({
-      template_id: templateId,
-      label:       raw.label,
-      category:    raw.category || 'Other',
-      sort_order:  nextSort,
+      subcategory_id: tplSubId,
+      label: raw.label,
+      sort_order: 999,
     })
     if (insErr) {
       console.error('save to template:', insErr.message)
@@ -189,21 +415,29 @@ export function useTripDetail(tripId) {
     rawItemsRef.current = rawItemsRef.current.map(i =>
       i.id === itemId ? { ...i, saved_to_template: true } : i,
     )
-    setTrip(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        checklists: {
-          ...prev.checklists,
-          [memberId]: asArray(prev.checklists[memberId]).map(item =>
-            item.id === itemId ? { ...item, savedToTemplate: true } : item,
-          ),
-        },
-      }
-    })
 
-    await supabase.from('checklist_items').update({ saved_to_template: true }).eq('id', itemId)
+    setTrip(prev =>
+      prev
+        ? { ...prev, sections: updateItemInSections(prev.sections, itemId, { savedToTemplate: true }) }
+        : prev,
+    )
+
+    const { error: upErr } = await supabase
+      .from('checklist_items')
+      .update({ saved_to_template: true })
+      .eq('id', itemId)
+    if (upErr) console.error(upErr)
   }, [])
 
-  return { trip, loading, error, toggleItem, addItem, saveToTemplate, reorderItems }
+  return {
+    trip,
+    loading,
+    error,
+    toggleItem,
+    addItem,
+    addSubcategory,
+    removeSubcategory,
+    saveToTemplate,
+    reorderItems,
+  }
 }

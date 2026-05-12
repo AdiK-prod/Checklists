@@ -1,5 +1,5 @@
 # GenAI Blueprint — Trip Checklist App
-**Version:** 2.0 — Full Technical Blueprint  
+**Version:** 3.0 — Architecture Refactor: Sections, Subcategories & Shared Items  
 **Prepared by:** Principal Product Architect  
 **Target agent:** Cursor / Windsurf / Claude Engineer  
 **Stack:** React + Vite + Tailwind CSS + Supabase + Vercel  
@@ -206,12 +206,16 @@ create table households (
 );
 
 -- Maps auth users to households (supports invited partners)
+-- CRITICAL: user_id UNIQUE constraint enforces one household per user (MVP).
+-- Without this, repeated onboarding runs accumulate duplicate rows, causing
+-- PGRST116 ("multiple rows returned") which hangs the auth loading state.
 create table household_users (
   household_id uuid references households(id) on delete cascade,
   user_id uuid references auth.users(id) on delete cascade,
   role text default 'member', -- 'owner' | 'member'
   joined_at timestamptz default now(),
-  primary key (household_id, user_id)
+  primary key (household_id, user_id),
+  constraint household_users_user_id_unique unique (user_id)
 );
 
 -- Household members (people, not necessarily users)
@@ -234,17 +238,41 @@ create table templates (
   id uuid primary key default gen_random_uuid(),
   household_id uuid references households(id) on delete cascade,
   name text not null,
-  icon text not null, -- lucide icon name
-  is_default boolean default false, -- pre-seeded defaults
+  icon text not null, -- lucide icon name e.g. 'Plane', 'Car', 'Moon'
+  is_default boolean default false, -- pre-seeded on household creation
   created_at timestamptz default now()
 );
 
--- Template items
-create table template_items (
+-- Template sections: either a shared category OR a specific family member
+-- section_type = 'shared'  → Documents, Essentials, Snacks etc. No member_id.
+-- section_type = 'person'  → references a real household_members row by name
+-- This replaces the old flat template_items.category text field.
+create table template_sections (
   id uuid primary key default gen_random_uuid(),
   template_id uuid references templates(id) on delete cascade,
+  section_type text not null check (section_type in ('shared', 'person')),
+  name text not null,         -- display name: 'Documents', 'Mum', 'Tom' etc.
+  member_id uuid references household_members(id) on delete set null,
+  -- member_id is set when section_type = 'person', null for shared sections
+  sort_order integer default 0,
+  created_at timestamptz default now()
+);
+
+-- Template subcategories: groups within a section e.g. Clothing, Medications
+-- Both shared and person sections can have subcategories.
+create table template_subcategories (
+  id uuid primary key default gen_random_uuid(),
+  section_id uuid references template_sections(id) on delete cascade,
+  name text not null,         -- 'Clothing', 'Medications', 'Travel docs' etc.
+  sort_order integer default 0,
+  created_at timestamptz default now()
+);
+
+-- Template items: individual checklist items within a subcategory
+create table template_items (
+  id uuid primary key default gen_random_uuid(),
+  subcategory_id uuid references template_subcategories(id) on delete cascade,
   label text not null,
-  category text not null, -- 'Documents' | 'Clothing' | 'Essentials' | 'Toiletries' | 'Entertainment' | 'Medications' | 'Other'
   sort_order integer default 0,
   created_at timestamptz default now()
 );
@@ -265,20 +293,45 @@ create table trips (
   created_at timestamptz default now()
 );
 
--- Maps members to trips (who is travelling)
+-- Maps members to trips (who is travelling on this specific trip)
+-- Shared sections always appear. Person sections only appear if that
+-- member is in trip_travellers.
 create table trip_travellers (
   trip_id uuid references trips(id) on delete cascade,
   member_id uuid references household_members(id) on delete cascade,
   primary key (trip_id, member_id)
 );
 
--- Checklist items (copied from template on trip creation, then independent)
-create table checklist_items (
+-- Checklist sections: live copy of template_sections for a specific trip
+-- Shared sections copied once. Person sections copied only for travelling members.
+create table checklist_sections (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid references trips(id) on delete cascade,
-  member_id uuid references household_members(id) on delete cascade,
+  section_type text not null check (section_type in ('shared', 'person')),
+  name text not null,         -- real member name e.g. 'Tom', or category name
+  member_id uuid references household_members(id) on delete set null,
+  sort_order integer default 0,
+  created_at timestamptz default now()
+);
+
+-- Checklist subcategories: live copy of template_subcategories per trip section
+-- Can also be created ad-hoc by the user on the trip page.
+create table checklist_subcategories (
+  id uuid primary key default gen_random_uuid(),
+  section_id uuid references checklist_sections(id) on delete cascade,
+  name text not null,
+  sort_order integer default 0,
+  is_manually_added boolean default false,
+  created_at timestamptz default now()
+);
+
+-- Checklist items: live items within a subcategory, fully independent of template
+-- is_manually_added: user added this item directly on the trip page
+-- saved_to_template: user tapped "Save to template" — write back to template_items
+create table checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  subcategory_id uuid references checklist_subcategories(id) on delete cascade,
   label text not null,
-  category text not null,
   sort_order integer default 0,
   checked boolean default false,
   is_ai_suggested boolean default false,
@@ -301,11 +354,14 @@ create table ai_suggestions_log (
 );
 
 -- Indexes for performance
-create index idx_checklist_items_trip_id on checklist_items(trip_id);
-create index idx_checklist_items_member_id on checklist_items(member_id);
+create index idx_template_sections_template_id on template_sections(template_id);
+create index idx_template_subcategories_section_id on template_subcategories(section_id);
+create index idx_template_items_subcategory_id on template_items(subcategory_id);
+create index idx_checklist_sections_trip_id on checklist_sections(trip_id);
+create index idx_checklist_subcategories_section_id on checklist_subcategories(section_id);
+create index idx_checklist_items_subcategory_id on checklist_items(subcategory_id);
 create index idx_trips_household_id on trips(household_id);
 create index idx_household_members_household_id on household_members(household_id);
-create index idx_template_items_template_id on template_items(template_id);
 create index idx_ai_suggestions_log_trip_id on ai_suggestions_log(trip_id);
 ```
 
@@ -317,17 +373,24 @@ alter table households enable row level security;
 alter table household_users enable row level security;
 alter table household_members enable row level security;
 alter table templates enable row level security;
+alter table template_sections enable row level security;
+alter table template_subcategories enable row level security;
 alter table template_items enable row level security;
 alter table trips enable row level security;
 alter table trip_travellers enable row level security;
+alter table checklist_sections enable row level security;
+alter table checklist_subcategories enable row level security;
 alter table checklist_items enable row level security;
 alter table ai_suggestions_log enable row level security;
 
 -- Helper function: get current user's household_id
+-- ORDER BY joined_at ensures client and DB always agree on the same household
+-- (matters if a user somehow has multiple rows during dev cleanup)
 create or replace function get_my_household_id()
 returns uuid as $$
   select household_id from household_users
   where user_id = auth.uid()
+  order by joined_at asc
   limit 1;
 $$ language sql security definer;
 
@@ -349,16 +412,37 @@ create policy "household users can manage members"
   on household_members for all
   using (household_id = get_my_household_id());
 
--- Templates and template items
+-- Templates and all nested template objects
 create policy "household users can manage templates"
   on templates for all
   using (household_id = get_my_household_id());
 
-create policy "household users can manage template items"
-  on template_items for all
+create policy "household users can manage template sections"
+  on template_sections for all
   using (
     template_id in (
       select id from templates where household_id = get_my_household_id()
+    )
+  );
+
+create policy "household users can manage template subcategories"
+  on template_subcategories for all
+  using (
+    section_id in (
+      select ts.id from template_sections ts
+      join templates t on t.id = ts.template_id
+      where t.household_id = get_my_household_id()
+    )
+  );
+
+create policy "household users can manage template items"
+  on template_items for all
+  using (
+    subcategory_id in (
+      select tsc.id from template_subcategories tsc
+      join template_sections ts on ts.id = tsc.section_id
+      join templates t on t.id = ts.template_id
+      where t.household_id = get_my_household_id()
     )
   );
 
@@ -367,12 +451,33 @@ create policy "household users can manage trips"
   on trips for all
   using (household_id = get_my_household_id());
 
--- Checklist items
-create policy "household users can manage checklist items"
-  on checklist_items for all
+-- Checklist sections, subcategories, items
+create policy "household users can manage checklist sections"
+  on checklist_sections for all
   using (
     trip_id in (
       select id from trips where household_id = get_my_household_id()
+    )
+  );
+
+create policy "household users can manage checklist subcategories"
+  on checklist_subcategories for all
+  using (
+    section_id in (
+      select cs.id from checklist_sections cs
+      join trips t on t.id = cs.trip_id
+      where t.household_id = get_my_household_id()
+    )
+  );
+
+create policy "household users can manage checklist items"
+  on checklist_items for all
+  using (
+    subcategory_id in (
+      select csc.id from checklist_subcategories csc
+      join checklist_sections cs on cs.id = csc.section_id
+      join trips t on t.id = cs.trip_id
+      where t.household_id = get_my_household_id()
     )
   );
 
@@ -425,6 +530,29 @@ export default async function handler(req, res) {
     console.error('Claude API error:', error);
     return res.status(500).json({ error: 'Suggestion generation failed' });
   }
+}
+
+// IMPORTANT: checklist_items inserts must be chunked.
+// PostgREST can hang or fail on large single-request payloads
+// (e.g. 4 travellers x 38-item template = 152+ rows in one call).
+// Insert in chunks of 200 rows maximum.
+const CHECKLIST_INSERT_CHUNK = 200
+
+async function insertChecklistChunks(supabase, rows) {
+  if (!rows.length) return
+  for (let i = 0; i < rows.length; i += CHECKLIST_INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + CHECKLIST_INSERT_CHUNK)
+    const { error } = await supabase.from('checklist_items').insert(chunk)
+    if (error) throw error
+  }
+}
+
+// IMPORTANT: truncate AI log text before insert.
+// prompt_sent and response_raw can be very large and slow or break the insert.
+const AI_LOG_MAX_CHARS = 120_000
+function clipText(s) {
+  const t = typeof s === 'string' ? s : ''
+  return t.length <= AI_LOG_MAX_CHARS ? t : t.slice(0, AI_LOG_MAX_CHARS) + '…[truncated]'
 }
 
 function buildPrompt(tripContext, baseItems) {
@@ -803,6 +931,86 @@ Do not change any internal layout or component behaviour.
 
 ---
 
+
+## Auth Bootstrap — Lessons Learned
+
+**Do not skip this section.** These patterns emerged from debugging and must be followed exactly.
+
+### The core rule: one linear bootstrap, no competing paths
+
+```
+await getSession()           // single source of truth for cold start
+  → set user/session
+  → if logged in: await fetchHousehold()
+  → finally: setLoading(false)   // ALWAYS runs, even on error
+
+onAuthStateChange()          // handles SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED
+                             // does NOT re-run fetchHousehold on TOKEN_REFRESHED or USER_UPDATED
+                             // does NOT handle INITIAL_SESSION (avoids a second competing bootstrap)
+```
+
+Never have two parallel paths both trying to resolve the session on first load.
+
+### fetchHousehold rules
+
+- Query `household_users` with `.order('joined_at', { ascending: true }).limit(1).maybeSingle()`
+- Then fetch `households` separately — do not use nested PostgREST embeds (RLS edge cases)
+- Use a module-level in-flight Map to deduplicate concurrent calls for the same userId
+- Wrap in try/finally — `householdLoading` must always clear
+- Cap with a timeout (25s default, configurable via `VITE_HOUSEHOLD_FETCH_TIMEOUT_MS`)
+- On timeout: clear loading and continue — the user can still see the app
+
+### householdLoading — what it gates and when NOT to show it
+
+`householdLoading` blocks routing only on the **first** household resolution per user per page session.
+After the first resolution completes (success, error, or timeout), subsequent background refetches
+must NOT set `householdLoading = true` again. Doing so causes repeated full-screen loading flashes
+on every auth event (TOKEN_REFRESHED fires ~every 60s).
+
+Track this with a module-level `householdFetchCompletedForUserId` variable:
+- If `userId !== householdFetchCompletedForUserId` → show loading gate, set it after first fetch
+- If already completed for this user → refetch silently in background, never show loading gate
+
+### Auth events — what triggers fetchHousehold
+
+| Event | Action |
+|---|---|
+| `SIGNED_IN` (first time for this user) | Run fetchHousehold, show loading gate |
+| `SIGNED_IN` (same user, already resolved) | Update session only, skip fetchHousehold |
+| `TOKEN_REFRESHED` | Update session only, skip fetchHousehold |
+| `USER_UPDATED` | Update session only, skip fetchHousehold |
+| `SIGNED_OUT` | Clear user, household, reset householdFetchCompletedForUserId |
+
+### The PGRST116 error — what it means and how to prevent it
+
+`PGRST116: Results contain N rows, application/vnd.pgrst.object+json requires 1 row`
+
+This error means `.maybeSingle()` found more than 1 row. In this app it means a user has
+multiple rows in `household_users` — almost always caused by repeated onboarding runs in dev.
+
+**Prevention:** the `household_users_user_id_unique` constraint (in schema above) makes this impossible.
+
+**If you see it in production:** a user has duplicate membership rows. Fix:
+```sql
+-- Keep the oldest, delete the rest
+DELETE FROM household_users
+WHERE user_id = '<affected_user_id>'
+AND household_id NOT IN (
+  SELECT household_id FROM household_users
+  WHERE user_id = '<affected_user_id>'
+  ORDER BY joined_at ASC
+  LIMIT 1
+);
+```
+
+### LoginScreen loading states — avoid UI flashes
+
+After a successful sign-in, do NOT immediately drop the form spinner.
+The button stays in submitting state until `user` appears in context.
+While `authLoading || householdLoading` and `user` is set → show a full-screen
+"Signing you in…" overlay instead of the form or verify card.
+This prevents a split-second flash of the wrong UI state between sign-in and redirect.
+
 ## Module 7 — Supabase Integration & Auth
 
 ```
@@ -882,13 +1090,16 @@ STEP 3 — Add family members:
 - Skip: "I'll add people later" (12px secondary) → redirects to /
 
 DEFAULT TEMPLATES TO SEED ON HOUSEHOLD CREATION:
-Create these 3 templates + their default items in template_items:
+See architecture-refactor-prompt.md Step 2 for the full section → subcategory → item
+structure for all 3 templates. That document is the authoritative seeding spec.
 
-Flight abroad (38 items across: Documents, Clothing, Toiletries, Electronics, Medications, Kids)
-Day trip (22 items across: Documents, Clothing, Toiletries, Snacks, Kids)
-Weekend away (31 items across: Documents, Clothing, Toiletries, Electronics, Kids)
+Summary:
+- Flight abroad: shared sections (Documents, Essentials) + person section per member
+- Day trip: shared section (Essentials) + person section per member
+- Weekend away: shared sections (Documents, Essentials) + person section per member
 
-Define sensible default items for each — use judgment for specific items, they will be editable.
+Person sections use the member's real name and member_id — not generic labels.
+Shared sections have member_id = null.
 
 STOP if the template seeding logic or member creation flow is unclear.
 ```
@@ -908,24 +1119,33 @@ STEP 3 — Trip details: real input fields (not static display values).
 
 STEP 4 — AI Suggestions:
   On entering step 4:
-  1. Fetch template_items for the selected template
+  1. Fetch template_sections → template_subcategories → template_items for the selected template
   2. POST to /api/suggest with:
        tripContext: { destination, datesFrom, datesTo, weather, tripType, travellers (with ages) }
-       baseItems: template items (label + category)
+       baseItems: flattened list of template items (label + subcategory name + section name)
   3. Show loading state: "Generating suggestions..." with Sparkles icon animating (pulse)
   4. On response: render suggestion cards with real data from Claude
-  5. On error: show "Couldn't generate suggestions" + "Skip suggestions" button that proceeds to generation
+  5. On error: show "Couldn't generate suggestions" + "Skip suggestions" button
+
+  Suggestions panel shows two tracks:
+    - Shared suggestions (adapter, documents) → will land in shared checklist sections
+    - Person-specific suggestions (diapers for Sara) → will land in that person's section
 
 ON "Generate all checklists":
   1. Create trip record in Supabase
   2. Insert trip_travellers records for selected members
-  3. Copy template_items → checklist_items for each selected member
-  4. Insert AI-suggested items (isAiSuggested: true) for accepted suggestions + assigned members
+  3. Copy template structure → checklist structure using createChecklistFromTemplate()
+     See architecture-refactor-prompt.md Step 3 for the exact copy logic.
+     - Shared sections: always copied regardless of who is travelling
+     - Person sections: only copied for travelling members
+     - Use insertChecklistChunks() — max 200 rows per insert
+  4. Insert AI-suggested items (is_ai_suggested: true) into correct section + subcategory
+     See architecture-refactor-prompt.md Step 7 for routing logic.
   5. Log to ai_suggestions_log:
        prompt_sent, response_raw, suggestions_accepted (count of checked), suggestions_total
   6. Navigate to /trips/:newTripId
 
-STOP if the trip creation transaction, suggestion merging, or logging logic is unclear.
+STOP if the trip creation transaction, suggestion routing, or logging logic is unclear.
 ```
 
 ---
@@ -935,15 +1155,32 @@ STOP if the trip creation transaction, suggestion merging, or logging logic is u
 ```
 Replace hardcoded trip page data with live Supabase queries.
 
-- useTripDetail(tripId) fetches: trip record + travellers + all checklist_items grouped by member_id
+- useTripDetail(tripId) fetches full nested structure:
+    checklist_sections → checklist_subcategories → checklist_items
+    Returns normalised object with sections split into shared and person tracks.
+    See architecture-refactor-prompt.md Step 5 for the exact return shape.
+
+- Trip page renders two visual tracks:
+    SHARED sections at top (Documents, Essentials etc.)
+    PEOPLE sections below (one card per travelling member, showing real name + avatar)
+    See architecture-refactor-prompt.md Step 4 for full layout spec.
+
 - Checking an item: PATCH checklist_items set checked = true/false immediately (optimistic update)
 - Progress bar recalculates reactively from local state after each check
-- Add item: INSERT checklist_items record, append to local state optimistically
-- Save to template: UPDATE checklist_items set saved_to_template = true
-  + INSERT template_items with the same label/category (TODO L2 flag removed — implement now)
-- AI suggestions panel: reads from the trip's accepted ai suggestions (isAiSuggested items)
+  Overall = total checked / total items across ALL sections (shared + person)
 
-STOP if the optimistic update pattern or save-to-template mutation is unclear.
+- Add subcategory: INSERT checklist_subcategories, append to section in local state
+- Add item within subcategory: INSERT checklist_items (is_manually_added: true)
+  Show "Save to template" link on new item
+- Save to template:
+    UPDATE checklist_items set saved_to_template = true
+    INSERT template_items into matching template_subcategory
+    (match by section name + subcategory name)
+
+- AI suggestions panel: reads from checklist_items where is_ai_suggested = true,
+  grouped by their parent section (shared or person)
+
+STOP if the optimistic update pattern, subcategory creation, or save-to-template mutation is unclear.
 ```
 
 ---
@@ -998,7 +1235,10 @@ Perform a full quality assurance pass across the entire application.
    [ ] Skip at step 1 → dashboard with empty state
    [ ] Skip at step 2/3 → dashboard
    [ ] Complete flow → household + members + templates created in Supabase
-   [ ] Default templates seeded correctly (verify in Supabase dashboard)
+   [ ] Default templates seeded with correct section → subcategory → item structure
+   [ ] Person sections in templates use real member names and member_ids
+   [ ] Shared sections in templates have member_id = null
+   [ ] Verify in Supabase: template_sections, template_subcategories, template_items all populated
 
 3. TRIP CREATION:
    [ ] All 4 wizard steps navigable forward and back
@@ -1012,13 +1252,17 @@ Perform a full quality assurance pass across the entire application.
    [ ] New trip appears on dashboard
 
 4. TRIP PAGE:
-   [ ] All checklists render correctly per traveller
-   [ ] Checking items updates Supabase immediately
-   [ ] Progress bar updates reactively
-   [ ] Add item creates correct DB record
-   [ ] Save to template creates template_items record
-   [ ] AI suggestions panel shows correct accepted items
-   [ ] Person cards collapse and expand correctly
+   [ ] Shared sections render above people sections with correct track labels
+   [ ] Shared section cards show category icon (no avatar)
+   [ ] Person section cards show avatar + real member name
+   [ ] Subcategory labels visible within each section
+   [ ] Checking items updates Supabase immediately (optimistic update)
+   [ ] Progress bar updates reactively — overall and per-section
+   [ ] Add subcategory works within any section
+   [ ] Add item works within any subcategory
+   [ ] Save to template writes back to correct template_items row
+   [ ] AI suggestions panel shows accepted items grouped by section
+   [ ] All section cards collapse and expand independently
    [ ] Suggestions panel collapses and expands without navigating away
 
 5. SETTINGS:
@@ -1046,13 +1290,19 @@ STOP and report any failures before marking QA complete.
 The following are explicitly deferred. Add these as TODO comments in relevant components:
 
 ```javascript
-// TODO L3: Drag-to-reorder checklist items (react-beautiful-dnd)
-// TODO L3: Category auto-assign on add-item via Claude API
+// TODO L3: Drag-to-reorder checklist items within subcategory (react-beautiful-dnd)
+// TODO L3: Drag-to-reorder subcategories within a section
+// TODO L3: Duplicate member section across templates
+//          ("copy Kid A list to Kid C" — resolves new member onboarding)
+// TODO L3: Nudge user to add new household member to existing templates
+//          ("You added Charlie — want to add him to your templates?")
 // TODO L3: Post-trip "update template?" prompt after marking trip complete
+// TODO L3: Category auto-assign on add-item via Claude API
 // TODO L3: PWA / offline mode with service worker caching
 // TODO L3: Push notifications for trip departure reminders
 // TODO L3: Trip sharing / export as PDF summary
 // TODO L3: Per-person completion notifications to invited partner
+// TODO L3: Template editor UI (dedicated screen for editing template structure)
 ```
 
 ---
@@ -1064,8 +1314,15 @@ The following are explicitly deferred. Add these as TODO comments in relevant co
 VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJ...
 
+# Supabase service key (server-side only — used by keepalive cron)
+SUPABASE_SERVICE_KEY=eyJ...
+
 # Anthropic (server-side only — Vercel function)
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional: extend household fetch timeout on slow networks (default 25000ms)
+VITE_HOUSEHOLD_FETCH_TIMEOUT_MS=25000
 ```
 
-Never expose `ANTHROPIC_API_KEY` to the client. It must only be used in `api/suggest.js`.
+Never expose `ANTHROPIC_API_KEY` or `SUPABASE_SERVICE_KEY` to the client.
+Both must only be used in server-side Vercel functions (`api/suggest.js`, `api/keepalive.js`).

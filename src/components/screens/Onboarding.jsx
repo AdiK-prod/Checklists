@@ -4,6 +4,7 @@ import { Plane, X } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { buildHouseholdMemberInsert } from '../../lib/memberInsert'
+import { seedTemplates } from '../../lib/seedTemplates'
 import Avatar from '../ui/Avatar'
 import { normalizeMember } from '../../lib/transforms'
 
@@ -51,13 +52,8 @@ export default function Onboarding() {
     return hid
   }
 
-  async function seedIfNeeded(hid) {
-    const { error } = await supabase.rpc('seed_default_templates', { p_household_id: hid })
-    if (error) throw error
-  }
-
-  async function finishAndGoHome(hid) {
-    await seedIfNeeded(hid)
+  async function finishAndGoHome(hid, membersToSeed = []) {
+    await seedTemplates(supabase, hid, membersToSeed)
     await refreshHousehold(user.id)
     navigate('/', { replace: true })
   }
@@ -67,7 +63,7 @@ export default function Onboarding() {
     setLoading(true)
     try {
       const hid = await createHouseholdRecord(DEFAULT_NAME)
-      await finishAndGoHome(hid)
+      await finishAndGoHome(hid, [])
     } catch (e) {
       setError(e.message || 'Something went wrong')
     }
@@ -129,7 +125,10 @@ export default function Onboarding() {
     setError('')
     setLoading(true)
     try {
-      await finishAndGoHome(householdId)
+      await finishAndGoHome(
+        householdId,
+        members.map(m => ({ id: m.id, name: m.name })),
+      )
     } catch (e) {
       setError(e.message || 'Something went wrong')
     }

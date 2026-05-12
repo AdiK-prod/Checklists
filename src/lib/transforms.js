@@ -31,31 +31,40 @@ function initialsFromName(name = '') {
 export function normalizeMember(row) {
   const palette = AVATAR_PALETTE[hashId(row.id) % AVATAR_PALETTE.length]
   return {
-    id:           row.id,
-    name:         row.name,
-    role:         row.role,
-    age:          row.age ?? null,
-    initials:     initialsFromName(row.name),
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    age: row.age ?? null,
+    initials: initialsFromName(row.name),
     avatarColour: palette,
   }
 }
 
 export function normalizeTripRow(row) {
-  const checklistItems = asArray(row.checklist_items)
   const tripTravellers = asArray(row.trip_travellers)
-  const total      = checklistItems.length
-  const done       = checklistItems.filter(i => i.checked).length
+  const sections = asArray(row.checklist_sections)
+  let total = 0
+  let done = 0
+  for (const sec of sections) {
+    const subs = asArray(sec.checklist_subcategories)
+    for (const sub of subs) {
+      for (const i of asArray(sub.checklist_items)) {
+        total++
+        if (i.checked) done++
+      }
+    }
+  }
   const travellers = tripTravellers.map(t => t.member_id)
 
   return {
-    id:          row.id,
-    name:        row.destination,
+    id: row.id,
+    name: row.destination,
     destination: row.destination,
-    tripType:    row.trip_type,
-    datesFrom:   row.dates_from,
-    datesTo:     row.dates_to,
-    weather:     row.weather,
-    status:      row.status,
+    tripType: row.trip_type,
+    datesFrom: row.dates_from,
+    datesTo: row.dates_to,
+    weather: row.weather,
+    status: row.status,
     travellers,
     total,
     done,
@@ -64,74 +73,151 @@ export function normalizeTripRow(row) {
 
 export function normalizeItem(item) {
   return {
-    id:              item.id,
-    label:           item.label,
-    category:        item.category,
-    checked:         item.checked,
-    isAiSuggested:   item.is_ai_suggested,
+    id: item.id,
+    subcategoryId: item.subcategory_id,
+    label: item.label,
+    checked: item.checked,
+    isAiSuggested: item.is_ai_suggested,
     isManuallyAdded: item.is_manually_added,
     savedToTemplate: item.saved_to_template,
-    sortOrder:       item.sort_order,
+    sortOrder: item.sort_order,
   }
 }
 
-export function normalizeTripDetail(row) {
-  const tripTravellers = asArray(row.trip_travellers)
-  const checklistItems = asArray(row.checklist_items)
+export function normalizeSubcategory(row, items) {
+  const arr = asArray(items)
+    .map(normalizeItem)
+    .sort(
+      (a, b) =>
+        (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.label).localeCompare(String(b.label)),
+    )
+  return {
+    id: row.id,
+    name: row.name,
+    sortOrder: row.sort_order,
+    isManuallyAdded: row.is_manually_added,
+    items: arr,
+  }
+}
 
-  const members = tripTravellers.map((t) => {
+function travellersMembersFromRow(tripRow) {
+  const tripTravellers = asArray(tripRow.trip_travellers)
+  return tripTravellers.map(t => {
     const hm = t.household_members
     if (hm && !Array.isArray(hm) && hm.id) return normalizeMember(hm)
     const hmRow = Array.isArray(hm) ? hm[0] : hm
     if (hmRow?.id) return normalizeMember(hmRow)
     return normalizeMember({
-      id:   t.member_id,
+      id: t.member_id,
       name: 'Traveller',
       role: 'parent',
-      age:  null,
+      age: null,
     })
   })
-  const travellers = tripTravellers.map(t => t.member_id)
+}
 
-  const checklists = {}
-  checklistItems.forEach(item => {
-    if (!checklists[item.member_id]) checklists[item.member_id] = []
-    checklists[item.member_id].push(normalizeItem(item))
-  })
-  Object.values(checklists).forEach(items =>
-    items.sort((a, b) => a.sortOrder - b.sortOrder)
+export function buildSectionsTree(sectionRows, subcatRows, itemRows) {
+  const bySection = new Map()
+  const sortedSections = [...asArray(sectionRows)].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   )
 
-  // Build AI suggestions: one entry per unique label across all members
-  const seen = new Set()
-  const aiSuggestions = []
-  checklistItems
-    .filter(i => i.is_ai_suggested)
-    .forEach(item => {
-      if (!seen.has(item.label)) {
-        seen.add(item.label)
-        aiSuggestions.push({
-          label:      item.label,
-          assignedTo: checklistItems
-            .filter(i => i.label === item.label && i.is_ai_suggested)
-            .map(i => i.member_id),
-        })
+  for (const s of sortedSections) {
+    const node = {
+      id: s.id,
+      sectionType: s.section_type,
+      name: s.name,
+      memberId: s.member_id,
+      sortOrder: s.sort_order,
+      member: null,
+      subcategories: [],
+    }
+    bySection.set(s.id, node)
+  }
+
+  const bySub = new Map()
+  const sortedSubs = [...asArray(subcatRows)].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+  )
+  for (const sc of sortedSubs) {
+    const sec = bySection.get(sc.section_id)
+    if (!sec) continue
+    const subNode = { ...sc, items: [] }
+    sec.subcategories.push(subNode)
+    bySub.set(sc.id, subNode)
+  }
+
+  for (const it of asArray(itemRows)) {
+    const sub = bySub.get(it.subcategory_id)
+    if (sub) sub.items.push(it)
+  }
+
+  const list = sortedSections.map(s => bySection.get(s.id)).filter(Boolean)
+  return { list, bySection, bySub }
+}
+
+export function attachMembersToSections(sectionsList, members) {
+  const mid = new Map(members.map(m => [m.id, m]))
+  for (const sec of sectionsList) {
+    if (sec.sectionType === 'person' && sec.memberId) {
+      sec.member = mid.get(sec.memberId) || null
+    }
+  }
+}
+
+export function buildAiSuggestionsFromSections(sectionsList, travellerIds) {
+  const byLabel = new Map()
+  for (const sec of sectionsList) {
+    for (const sub of sec.subcategories || []) {
+      for (const item of sub.items || []) {
+        if (!item.isAiSuggested) continue
+        const set = byLabel.get(item.label) || new Set()
+        if (sec.sectionType === 'shared') {
+          travellerIds.forEach(id => set.add(id))
+        } else if (sec.memberId) {
+          set.add(sec.memberId)
+        }
+        byLabel.set(item.label, set)
       }
-    })
+    }
+  }
+  return [...byLabel.entries()].map(([label, set]) => ({
+    label,
+    assignedTo: [...set],
+  }))
+}
+
+/**
+ * @param {object} tripRow — trips row + trip_travellers embed (with household_members)
+ * @param {object[]} sectionsList — normalised section tree (raw snake_case subcats/items ok)
+ */
+export function normalizeTripDetail(tripRow, sectionsList) {
+  const tripTravellers = asArray(tripRow.trip_travellers)
+  const travellers = tripTravellers.map(t => t.member_id)
+  const members = travellersMembersFromRow(tripRow)
+
+  const subNorm = sectionsList.map(sec => ({
+    ...sec,
+    subcategories: (sec.subcategories || []).map(sub =>
+      normalizeSubcategory(sub, sub.items),
+    ),
+  }))
+
+  const aiSuggestions = buildAiSuggestionsFromSections(subNorm, travellers)
 
   return {
-    id:           row.id,
-    name:         row.destination,
-    destination:  row.destination,
-    tripType:     row.trip_type,
-    templateId:   row.template_id,
-    datesFrom:    row.dates_from,
-    datesTo:      row.dates_to,
-    weather:      row.weather,
-    status:       row.status,
+    id: tripRow.id,
+    name: tripRow.destination,
+    destination: tripRow.destination,
+    tripType: tripRow.trip_type,
+    templateId: tripRow.template_id,
+    datesFrom: tripRow.dates_from,
+    datesTo: tripRow.dates_to,
+    weather: tripRow.weather,
+    status: tripRow.status,
     travellers,
     members,
-    checklists,
+    sections: subNorm,
     aiSuggestions,
   }
 }

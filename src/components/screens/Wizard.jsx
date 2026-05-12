@@ -4,8 +4,9 @@ import { X, ArrowLeft, Sparkles } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useHousehold } from '../../hooks/useHousehold'
 import { useTemplates } from '../../hooks/useTemplates'
+import { useEnsureTemplatesSeeded } from '../../hooks/useEnsureTemplatesSeeded'
 import { supabase } from '../../lib/supabase'
-import { createTripFromWizard } from '../../lib/tripService'
+import { createTripFromWizard, fetchTemplateTree, templateTreeToBaseItems } from '../../lib/tripService'
 import { weatherSummaryForTrip } from '../../lib/tripWeatherSummary'
 import { asArray } from '../../lib/transforms'
 import StepIndicator from '../wizard/StepIndicator'
@@ -37,6 +38,7 @@ function mapAiToWizardSuggestions(apiList, travellerMembers) {
       memberIds:          ids,
       hasAllChip:         true,
       assignedTo:         assigned,
+      assignToAll:        Boolean(s.assignToAll),
       checked:            true,
       personSpecificNote: s.personSpecificNote,
     }
@@ -47,7 +49,15 @@ export default function Wizard() {
   const { household, user }     = useAuth()
   const navigate                = useNavigate()
   const { members, loading: membersLoading }     = useHousehold(household?.id)
-  const { templates, loading: templatesLoading } = useTemplates(household?.id)
+  const { templates, loading: templatesLoading, refetch: refetchTemplates } = useTemplates(household?.id)
+  useEnsureTemplatesSeeded(
+    household?.id,
+    members,
+    membersLoading,
+    templates,
+    templatesLoading,
+    refetchTemplates,
+  )
 
   const [step, setStep]                         = useState(1)
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
@@ -94,12 +104,11 @@ export default function Wizard() {
     setAiError(false)
     setSuggestions([])
 
-    const { data: baseRows, error: bErr } = await supabase
-      .from('template_items')
-      .select('label, category')
-      .eq('template_id', selectedTemplateId)
-
-    if (bErr) {
+    let baseRows = []
+    try {
+      const tree = await fetchTemplateTree(supabase, selectedTemplateId)
+      baseRows = templateTreeToBaseItems(tree)
+    } catch {
       setAiLoading(false)
       setAiError(true)
       setStep4Ready(true)

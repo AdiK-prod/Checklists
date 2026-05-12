@@ -1,8 +1,4 @@
-import { asArray } from './transforms'
-
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-
-const CATEGORY_ORDER = ['Documents','Clothing','Essentials','Toiletries','Entertainment','Medications','Other']
 
 /**
  * Format a date range into a compact label.
@@ -38,21 +34,6 @@ export function isTripPast(trip) {
 }
 
 /**
- * Compute overall checklist progress (0–100) across all member lists.
- */
-export function computeProgress(checklists) {
-  let total = 0
-  let checked = 0
-  Object.values(checklists || {}).forEach(items => {
-    asArray(items).forEach(item => {
-      total++
-      if (item.checked) checked++
-    })
-  })
-  return total === 0 ? 0 : Math.round((checked / total) * 100)
-}
-
-/**
  * Compute the number of nights between two date strings.
  */
 export function computeNights(from, to) {
@@ -63,28 +44,12 @@ export function computeNights(from, to) {
 }
 
 /**
- * Group checklist items by category, in the canonical order.
- * Returns: [{ category, items }]
- */
-export function groupByCategory(items) {
-  const map = {}
-  asArray(items).forEach(item => {
-    const cat = item.category || 'Other'
-    if (!map[cat]) map[cat] = []
-    map[cat].push(item)
-  })
-  return CATEGORY_ORDER
-    .filter(cat => map[cat])
-    .map(cat => ({ category: cat, items: map[cat].sort((a, b) => a.sortOrder - b.sortOrder) }))
-}
-
-/**
  * Describe the traveller mix for a trip.
  * e.g. "2 adults · 2 kids" or "3 adults"
  */
 export function describeTravellers(travellerIds, members) {
-  const ids = asArray(travellerIds)
-  const travellers = asArray(members).filter(m => ids.includes(m.id))
+  const ids = Array.isArray(travellerIds) ? travellerIds : []
+  const travellers = Array.isArray(members) ? members.filter(m => ids.includes(m.id)) : []
   const parents = travellers.filter(m => m.role === 'parent')
   const kids    = travellers.filter(m => m.role === 'kid')
 
