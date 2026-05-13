@@ -21,6 +21,7 @@ import {
   DEFAULT_BUCKET_SUBCATEGORY_NAME,
   isDefaultBucketSubcategoryName,
 } from '../../lib/templateLayout'
+import { updateTemplateItemLabel } from '../../lib/tripService'
 import { asArray } from '../../lib/transforms'
 import SectionCard from '../ui/SectionCard'
 
@@ -472,6 +473,11 @@ export default function TemplatesScreen() {
     await mergeTemplateRow(openId)
   }
 
+  async function renameTemplateItem(itemId, label) {
+    await updateTemplateItemLabel(itemId, label)
+    await mergeTemplateRow(openId)
+  }
+
   const reorderTemplateItems = useCallback(async (_subcategoryId, orderedIds, templateId) => {
     if (!orderedIds.length || !templateId) return
     const results = await Promise.all(
@@ -650,7 +656,7 @@ export default function TemplatesScreen() {
                   <button
                     type="button"
                     onClick={() => setOpenId(expanded ? null : tpl.id)}
-                    className="w-full flex items-center gap-3 px-3 py-3 text-left"
+                    className="w-full flex items-center gap-3 px-3 py-3 text-start"
                   >
                     <div
                       className="rounded-input flex items-center justify-center flex-shrink-0"
@@ -738,6 +744,7 @@ export default function TemplatesScreen() {
                                 onRemoveCategory={removeTemplateCategoryRow}
                                 quickAddTemplateItem={appendTemplateItem}
                                 onRemoveItem={removeTemplateItem}
+                                onUpdateItemLabel={renameTemplateItem}
                                 onRenameSectionHeader={updateTemplateSectionName}
                                 onRemoveSectionCard={removeTemplateSectionById}
                               />
@@ -751,7 +758,7 @@ export default function TemplatesScreen() {
                                 type="button"
                                 onClick={() => setAddSectionOpen(o => !o)}
                                 aria-expanded={addSectionOpen}
-                                className="w-full flex items-center gap-2 px-3 py-3 text-left"
+                                className="w-full flex items-center gap-2 px-3 py-3 text-start"
                               >
                                 <span
                                   className="flex-1 text-11 font-medium uppercase text-content-secondary"

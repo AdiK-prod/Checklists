@@ -18,23 +18,33 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowLeft,
-  MoreVertical,
   Plane,
   Car,
   Moon,
-  Sparkles,
   ChevronDown,
   GripVertical,
   Check,
   BookmarkPlus,
+  Sun,
+  Cloud,
   CloudSun,
+  CloudDrizzle,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
   X,
 } from 'lucide-react'
+import { useDirection } from '../../contexts/DirectionContext'
+import { flipIcon } from '../../lib/dirUtils'
+import { getCachedWeather } from '../../lib/weatherService'
+import { deleteTrip } from '../../lib/tripService'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
 import { getSectionIconMeta } from '../../lib/sectionIcons'
 import SectionCard from '../ui/SectionCard'
+import ActionMenu from '../ui/ActionMenu'
+import EditTripSheet from '../ui/EditTripSheet'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -88,8 +98,8 @@ function tripProgressTotals(sections) {
 function TrackLabel({ children }) {
   return (
     <p
-      className="text-11 font-medium uppercase mb-2 mt-1"
-      style={{ color: '#6b6b6b', letterSpacing: '0.07em' }}
+      className="text-track-label font-medium uppercase mb-2 mt-1"
+      style={{ color: '#6b6b6b', letterSpacing: '0.05em' }}
     >
       {children}
     </p>
@@ -117,10 +127,22 @@ export default function TripPage() {
     removeSection,
     renameChecklistSubcategory,
     removeSubcategory,
+    renameChecklistItem,
   } = useTripDetail(tripId)
-  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const { dir } = useDirection()
+  const BackArrow = flipIcon(ArrowLeft, dir)
+
   const [weatherOpen, setWeatherOpen] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const [forecastData, setForecastData] = useState(null)
+  const [editSheetOpen, setEditSheetOpen] = useState(false)
+  const [localTrip, setLocalTrip] = useState(null)
+
+  useEffect(() => {
+    if (!tripId) return
+    const cached = getCachedWeather(tripId)
+    if (cached) setForecastData(cached)
+  }, [tripId])
 
   const isInitialMount = useRef(true)
   const [animatedProgress, setAnimatedProgress] = useState(0)
@@ -168,7 +190,7 @@ export default function TripPage() {
             className="flex items-center gap-1 text-13"
             style={{ color: '#2d6fb5' }}
           >
-            <ArrowLeft size={16} /> All trips
+            <BackArrow size={16} /> All trips
           </button>
         </div>
         <div className="px-4 pb-8">
@@ -195,10 +217,11 @@ export default function TripPage() {
     )
   }
 
-  const HeroIcon = iconFromTripType(trip.tripType)
-  const dates = formatTripDates(trip.datesFrom, trip.datesTo)
-  const nights = computeNights(trip.datesFrom, trip.datesTo)
-  const aiCount = (trip.aiSuggestions || []).length
+  const displayTrip = localTrip ?? trip
+
+  const HeroIcon = iconFromTripType(displayTrip.tripType)
+  const dates = formatTripDates(displayTrip.datesFrom, displayTrip.datesTo)
+  const nights = computeNights(displayTrip.datesFrom, displayTrip.datesTo)
   const membersList = Array.isArray(trip.members) ? trip.members : []
   const travellerIds = Array.isArray(trip.travellers) ? trip.travellers : []
   const travellers = membersList.filter(m => travellerIds.includes(m.id))
@@ -210,14 +233,6 @@ export default function TripPage() {
     if (kids.length === 0) return `${parents.length} adult${parents.length !== 1 ? 's' : ''}`
     if (parents.length === 0) return `${kids.length} kid${kids.length !== 1 ? 's' : ''}`
     return `${parents.length} adult${parents.length !== 1 ? 's' : ''} · ${kids.length} kid${kids.length !== 1 ? 's' : ''}`
-  })()
-
-  const weatherText = trip.weather && String(trip.weather).trim()
-  const weatherPreview = (() => {
-    if (!weatherText) return ''
-    const line = weatherText.split('\n')[0].trim()
-    if (line.length <= 96) return line
-    return `${line.slice(0, 93).trimEnd()}…`
   })()
 
   const sectionsSorted = [...(trip.sections || [])].sort(
@@ -250,19 +265,26 @@ export default function TripPage() {
     }
   }
 
+  async function handleDeleteTrip() {
+    if (!window.confirm('Remove this trip and all its checklists?')) return
+    try {
+      await deleteTrip(tripId)
+      navigate('/', { state: { direction: 'back' } })
+    } catch (e) {
+      window.alert(e?.message || 'Could not delete trip.')
+    }
+  }
+
   return (
     <div className="bg-page">
-      <div className="flex items-center justify-between px-4 pt-4 pb-3">
+      <div className="px-4 pt-4 pb-3">
         <button
           onClick={() => navigate('/', { state: { direction: 'back' } })}
           className="flex items-center gap-1 text-13"
           style={{ color: '#2d6fb5' }}
         >
-          <ArrowLeft size={16} />
+          <BackArrow size={16} />
           All trips
-        </button>
-        <button className="text-content-hint" aria-label="More options">
-          <MoreVertical size={20} />
         </button>
       </div>
 
@@ -270,11 +292,22 @@ export default function TripPage() {
         <div className="bg-navy rounded-card p-4 mb-3">
           <div className="flex items-center gap-2 mb-1">
             <HeroIcon size={17} color="white" />
-            <h2 className="text-[17px] font-medium text-white leading-tight">{trip.name}</h2>
+            <h2 className="flex-1 text-[17px] font-medium text-white leading-tight min-w-0 truncate">
+              {displayTrip.name}
+            </h2>
+            <ActionMenu
+              buttonSize={32}
+              iconSize={18}
+              buttonStyle={{ color: 'rgba(255,255,255,0.7)', flexShrink: 0 }}
+              items={[
+                { label: 'Edit', onClick: () => setEditSheetOpen(true) },
+                { label: 'Remove', onClick: handleDeleteTrip, danger: true },
+              ]}
+            />
           </div>
 
           <p className="text-12 mb-3" style={{ color: '#aec6e8' }}>
-            {[dates, nights > 0 && `${nights} night${nights !== 1 ? 's' : ''}`, trip.tripType]
+            {[dates, nights > 0 && `${nights} night${nights !== 1 ? 's' : ''}`, displayTrip.tripType]
               .filter(Boolean)
               .join(' · ')}
           </p>
@@ -319,117 +352,19 @@ export default function TripPage() {
           )}
         </div>
 
-        {weatherText && (
-          <div
-            className="bg-white rounded-card mb-3 overflow-hidden"
-            style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
-          >
-            <button
-              type="button"
-              onClick={() => setWeatherOpen(o => !o)}
-              aria-expanded={weatherOpen}
-              className="w-full flex items-start gap-2 px-4 py-3 text-left"
-            >
-              <CloudSun size={18} className="flex-shrink-0 mt-0.5 text-content-secondary" />
-              <span className="flex-1 min-w-0">
-                <span className="block text-13 font-medium text-content-primary">Weather</span>
-                {!weatherOpen && (
-                  <span className="block text-12 text-content-secondary mt-0.5 leading-snug line-clamp-2">
-                    {weatherPreview}
-                  </span>
-                )}
-              </span>
-              <ChevronDown
-                size={18}
-                className="flex-shrink-0 text-content-hint mt-0.5"
-                style={{
-                  transition: 'transform 200ms ease',
-                  transform: weatherOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                }}
-              />
-            </button>
-            <div
-              style={{
-                display: 'grid',
-                transition: 'grid-template-rows 250ms ease',
-                gridTemplateRows: weatherOpen ? '1fr' : '0fr',
-              }}
-            >
-              <div style={{ overflow: 'hidden' }}>
-                <div
-                  className="px-4 pb-3 text-12 text-content-primary leading-relaxed whitespace-pre-wrap"
-                  style={{
-                    borderTop: '0.5px solid rgba(0,0,0,0.06)',
-                    backgroundColor: '#f8f7f4',
-                    maxHeight: 'min(70vh, 28rem)',
-                    overflowY: 'auto',
-                  }}
-                >
-                  {weatherText}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <WeatherCard
+          forecastData={forecastData}
+          storedWeather={displayTrip.weather}
+          weatherOpen={weatherOpen}
+          onToggle={() => setWeatherOpen(o => !o)}
+        />
 
-        {aiCount > 0 && (
+        {/* TODO: Re-enable AI suggestions — see /api/suggest.js */}
+        {/* aiCount > 0 && (
           <div className="bg-white rounded-card mb-3" style={{ border: '0.5px solid #e8d8b0' }}>
-            <button
-              onClick={() => setAiPanelOpen(o => !o)}
-              className="w-full flex items-center gap-2 px-4 py-3"
-            >
-              <Sparkles size={15} style={{ color: '#c47d1a', flexShrink: 0 }} />
-              <span className="flex-1 text-13 font-medium text-left" style={{ color: '#7a4f0d' }}>
-                Suggestions included
-              </span>
-              <span
-                className="text-11 font-medium text-white rounded-full px-2 py-0.5 mr-1"
-                style={{ backgroundColor: '#c47d1a' }}
-              >
-                {aiCount}
-              </span>
-              <ChevronDown
-                size={16}
-                style={{
-                  color: '#7a4f0d',
-                  flexShrink: 0,
-                  transition: 'transform 200ms ease',
-                  transform: aiPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                }}
-              />
-            </button>
-
-            <div
-              style={{
-                display: 'grid',
-                transition: 'grid-template-rows 250ms ease',
-                gridTemplateRows: aiPanelOpen ? '1fr' : '0fr',
-              }}
-            >
-              <div style={{ overflow: 'hidden' }}>
-                <div
-                  className="px-4 pb-3"
-                  style={{ borderTop: '0.5px solid #e8d8b0', backgroundColor: '#fffaf3' }}
-                >
-                  {trip.aiSuggestions.map((s, i) => {
-                    const assignedNames = (s.assignedTo || [])
-                      .map(id => trip.members.find(m => m.id === id)?.name)
-                      .filter(Boolean)
-                      .join(', ')
-                    return (
-                      <div key={i} className="pt-2.5">
-                        <p className="text-13 font-medium text-content-primary">{s.label}</p>
-                        {assignedNames && (
-                          <p className="text-11 text-content-secondary mt-0.5">Added to: {assignedNames}</p>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
+            ...AI suggestions panel (kept for existing trips)...
           </div>
-        )}
+        ) */}
 
         {sectionsSorted.length === 0 && (
           <div
@@ -487,6 +422,7 @@ export default function TripPage() {
               onToggleItem={toggleItem}
               onSaveToTemplate={saveToTemplate}
               onRemoveItem={removeChecklistItem}
+              onUpdateItemLabel={renameChecklistItem}
               onRenameSectionHeader={updateSection}
               onRemoveSectionCard={removeSection}
             />
@@ -513,6 +449,7 @@ export default function TripPage() {
               onToggleItem={toggleItem}
               onSaveToTemplate={saveToTemplate}
               onRemoveItem={removeChecklistItem}
+              onUpdateItemLabel={renameChecklistItem}
               onRenameSectionHeader={updateSection}
               onRemoveSectionCard={removeSection}
             />
@@ -521,6 +458,13 @@ export default function TripPage() {
           <TripAddCategoryPanel trip={trip} addSection={addSection} />
         </DndContext>
       </div>
+
+      <EditTripSheet
+        open={editSheetOpen}
+        trip={displayTrip}
+        onClose={() => setEditSheetOpen(false)}
+        onSaved={updated => setLocalTrip(prev => ({ ...(prev ?? trip), ...updated }))}
+      />
     </div>
   )
 }
@@ -583,11 +527,11 @@ function TripAddCategoryPanel({ trip, addSection }) {
         type="button"
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-3 text-left"
+        className="w-full flex items-center gap-2 px-3 py-3 text-start"
       >
         <span
-          className="flex-1 text-11 font-medium uppercase text-content-secondary"
-          style={{ letterSpacing: '0.07em' }}
+          className="flex-1 text-track-label font-medium uppercase text-content-secondary"
+          style={{ letterSpacing: '0.05em' }}
         >
           ADD SECTION
         </span>
@@ -695,4 +639,158 @@ function TripAddCategoryPanel({ trip, addSection }) {
   )
 }
 
+// ─── Weather card ────────────────────────────────────────────────────────────
 
+const CONDITION_ICONS = {
+  'Clear sky':              Sun,
+  'Mainly clear':           Sun,
+  'Partly cloudy':          CloudSun,
+  'Overcast':               Cloud,
+  'Foggy':                  Cloud,
+  'Icy fog':                Cloud,
+  'Light drizzle':          CloudDrizzle,
+  'Drizzle':                CloudDrizzle,
+  'Heavy drizzle':          CloudDrizzle,
+  'Light rain':             CloudRain,
+  'Rain':                   CloudRain,
+  'Heavy rain':             CloudRain,
+  'Rain showers':           CloudRain,
+  'Showers':                CloudRain,
+  'Heavy showers':          CloudRain,
+  'Light snow':             CloudSnow,
+  'Snow':                   CloudSnow,
+  'Heavy snow':             CloudSnow,
+  'Thunderstorm':           CloudLightning,
+  'Thunderstorm with hail': CloudLightning,
+  'Mixed conditions':       Cloud,
+}
+
+function conditionIcon(condition) {
+  return CONDITION_ICONS[condition] ?? Cloud
+}
+
+function forecastSummary(days) {
+  if (!days?.length) return { condition: '', tempMin: null, tempMax: null }
+  const mins = days.map(d => d.tempMin).filter(v => v != null)
+  const maxes = days.map(d => d.tempMax).filter(v => v != null)
+  const freq = {}
+  for (const d of days) freq[d.condition] = (freq[d.condition] || 0) + 1
+  const condition = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
+  return {
+    condition,
+    tempMin: mins.length  ? Math.min(...mins)  : null,
+    tempMax: maxes.length ? Math.max(...maxes) : null,
+  }
+}
+
+function formatDay(dateStr) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+  }).format(new Date(`${dateStr}T12:00:00`))
+}
+
+/**
+ * Resolves the forecast array to display from cache or stored DB weather.
+ * Returns null if no valid structured forecast is available.
+ */
+function resolveWeatherForecast(forecastData, storedWeather) {
+  // 1. Live cache takes priority
+  if (forecastData?.forecast?.length) return forecastData.forecast
+
+  // 2. Stored structured { forecast: [...] } in DB
+  if (storedWeather && typeof storedWeather === 'object' && !Array.isArray(storedWeather)) {
+    if (Array.isArray(storedWeather.forecast) && storedWeather.forecast.length) {
+      return storedWeather.forecast
+    }
+  }
+
+  // 3. Old plain-string data or null → nothing to show
+  return null
+}
+
+function WeatherCard({ forecastData, storedWeather, weatherOpen, onToggle }) {
+  const forecast = resolveWeatherForecast(forecastData, storedWeather)
+  if (!forecast) return null
+
+  const summary = forecastSummary(forecast)
+  const SummaryIcon = conditionIcon(summary.condition)
+  const summaryTemp =
+    summary.tempMin != null && summary.tempMax != null
+      ? `${summary.tempMin}–${summary.tempMax}°C`
+      : summary.tempMax != null ? `${summary.tempMax}°C` : ''
+
+  const isLong = forecast.length > 7
+
+  return (
+    <div
+      className="bg-white rounded-card mb-3 overflow-hidden"
+      style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+    >
+      {/* Collapsed header (always visible) */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={weatherOpen}
+        className="w-full flex items-center gap-2 px-4 py-3 text-start"
+      >
+        <SummaryIcon size={16} className="flex-shrink-0" style={{ color: '#3d6494' }} />
+        <span className="flex-1 text-13 text-content-primary">
+          {[summary.condition, summaryTemp].filter(Boolean).join(' · ')}
+        </span>
+        <ChevronDown
+          size={16}
+          className="flex-shrink-0 text-content-hint"
+          style={{
+            transition: 'transform 200ms ease',
+            transform: weatherOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}
+        />
+      </button>
+
+      {/* Expanded content */}
+      <div
+        style={{
+          display: 'grid',
+          transition: 'grid-template-rows 250ms ease',
+          gridTemplateRows: weatherOpen ? '1fr' : '0fr',
+        }}
+      >
+        <div style={{ overflow: 'hidden' }}>
+          <div
+            className="px-4 pb-3 pt-2"
+            style={{ borderTop: '0.5px solid rgba(0,0,0,0.06)', backgroundColor: '#f8f7f4' }}
+          >
+            {isLong ? (
+              <p className="text-13 text-content-secondary">
+                {['Overall:', summary.condition, summaryTemp && `${summaryTemp} range`]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            ) : (
+              <div className="space-y-0.5">
+                {forecast.map(day => {
+                  const DayIcon = conditionIcon(day.condition)
+                  return (
+                    <div key={day.date} className="flex items-center gap-2 py-1">
+                      <span className="text-13 shrink-0" style={{ color: '#6b6b6b', minWidth: 90 }}>
+                        {formatDay(day.date)}
+                      </span>
+                      <DayIcon size={14} style={{ color: '#3d6494', flexShrink: 0 }} />
+                      <span className="flex-1 text-13 text-content-primary">{day.condition}</span>
+                      <span
+                        className="text-13 whitespace-nowrap shrink-0"
+                        style={{ color: '#6b6b6b', marginInlineStart: 'auto' }}
+                      >
+                        {day.tempMin}–{day.tempMax}°C
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

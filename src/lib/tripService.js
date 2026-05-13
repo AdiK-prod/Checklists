@@ -419,6 +419,59 @@ async function insertAcceptedAiSuggestions(client, tripId, travellingMemberIds, 
 }
 
 /**
+ * Delete a trip and all its cascade data.
+ * @param {string} tripId
+ */
+export async function deleteTrip(tripId) {
+  const { error } = await supabase.from('trips').delete().eq('id', tripId)
+  if (error) throw error
+}
+
+/**
+ * Update mutable fields on a trip record.
+ * @param {string} tripId
+ * @param {{ name?: string, destination?: string, datesFrom?: string, datesTo?: string, tripType?: string, weather?: object|null }} fields
+ */
+export async function updateTrip(tripId, fields) {
+  const patch = {}
+  if (fields.name        != null) patch.name        = fields.name
+  if (fields.destination != null) patch.destination = fields.destination
+  if (fields.datesFrom   != null) patch.dates_from  = fields.datesFrom
+  if (fields.datesTo     != null) patch.dates_to    = fields.datesTo
+  if (fields.tripType    != null) patch.trip_type   = fields.tripType
+  if ('weather' in fields)        patch.weather     = fields.weather
+
+  const { error } = await supabase.from('trips').update(patch).eq('id', tripId)
+  if (error) throw error
+}
+
+/**
+ * Rename a single checklist item in-place.
+ * @param {string} itemId
+ * @param {string} label
+ */
+export async function updateChecklistItemLabel(itemId, label) {
+  const { error } = await supabase
+    .from('checklist_items')
+    .update({ label })
+    .eq('id', itemId)
+  if (error) throw error
+}
+
+/**
+ * Rename a single template item in-place.
+ * @param {string} itemId
+ * @param {string} label
+ */
+export async function updateTemplateItemLabel(itemId, label) {
+  const { error } = await supabase
+    .from('template_items')
+    .update({ label })
+    .eq('id', itemId)
+  if (error) throw error
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.householdId
  * @param {string} opts.userId
@@ -443,8 +496,9 @@ export async function createTripFromWizard(opts) {
     datesTo,
     weather,
     tripType,
-    suggestions,
-    aiLog,
+    // TODO: Re-enable AI suggestions — see /api/suggest.js
+    // suggestions,
+    // aiLog,
   } = opts
 
   const { data: tripRow, error: tripErr } = await supabase
@@ -482,18 +536,19 @@ export async function createTripFromWizard(opts) {
     await ensureMinimalChecklistForTrip(tripId)
   }
 
-  await insertAcceptedAiSuggestions(supabase, tripId, memberIds, suggestions)
+  // TODO: Re-enable AI suggestions — see /api/suggest.js
+  // await insertAcceptedAiSuggestions(supabase, tripId, memberIds, suggestions)
 
-  const { error: logErr } = await supabase.from('ai_suggestions_log').insert({
-    trip_id: tripId,
-    household_id: householdId,
-    prompt_sent: clipAiLogText(aiLog.promptSent || '(none)'),
-    response_raw: clipAiLogText(aiLog.responseRaw || ''),
-    suggestions_accepted: aiLog.suggestionsAccepted,
-    suggestions_total: aiLog.suggestionsTotal,
-  })
-
-  if (logErr) throw logErr
+  // TODO: Re-enable AI suggestions — see /api/suggest.js
+  // const { error: logErr } = await supabase.from('ai_suggestions_log').insert({
+  //   trip_id: tripId,
+  //   household_id: householdId,
+  //   prompt_sent: clipAiLogText(aiLog.promptSent || '(none)'),
+  //   response_raw: clipAiLogText(aiLog.responseRaw || ''),
+  //   suggestions_accepted: aiLog.suggestionsAccepted,
+  //   suggestions_total: aiLog.suggestionsTotal,
+  // })
+  // if (logErr) throw logErr
 
   return { tripId }
 }

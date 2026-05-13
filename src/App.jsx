@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { DirectionProvider, useDirection } from './contexts/DirectionContext'
 import Dashboard       from './components/screens/Dashboard'
 import Wizard          from './components/screens/Wizard'
 import TripPage        from './components/screens/TripPage'
@@ -40,6 +41,7 @@ function OnboardingGate({ children }) {
 
 function AppRoutes() {
   const location  = useLocation()
+  const { dir }   = useDirection()
   const direction = location.state?.direction
   const animClass = direction === 'forward' ? 'screen-forward'
     : direction === 'back' ? 'screen-back'
@@ -54,7 +56,7 @@ function AppRoutes() {
       : 'min-h-screen md:h-screen md:overflow-y-auto md:overflow-x-hidden'
 
   return (
-    <div className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
+    <div dir={dir} className="bg-page md:bg-[#ede9e3] md:h-screen md:overflow-hidden md:flex md:justify-center">
       <div
         className={
           'relative w-full max-w-[430px] bg-page font-dm-sans md:rounded-[32px] md:border md:border-[rgba(0,0,0,0.08)] ' +
@@ -106,9 +108,11 @@ export default function App() {
     <BrowserRouter
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <DirectionProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </DirectionProvider>
     </BrowserRouter>
   )
 }

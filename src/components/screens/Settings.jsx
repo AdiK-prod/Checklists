@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, X } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
+import { useDirection } from '../../contexts/DirectionContext'
+import { flipIcon } from '../../lib/dirUtils'
 import { supabase } from '../../lib/supabase'
 import { normalizeMember } from '../../lib/transforms'
 import { buildHouseholdMemberInsert } from '../../lib/memberInsert'
@@ -9,7 +11,9 @@ import Avatar from '../ui/Avatar'
 
 export default function Settings() {
   const { user, household, signOut, refreshHousehold } = useAuth()
-  const navigate = useNavigate()
+  const navigate  = useNavigate()
+  const { lang, dir, toggleLanguage } = useDirection()
+  const BackArrow = flipIcon(ArrowLeft, dir)
 
   const [hName, setHName]         = useState('')
   const [editingHouse, setEditingHouse] = useState(false)
@@ -171,7 +175,7 @@ export default function Settings() {
           className="flex items-center gap-1 text-13"
           style={{ color: '#2d6fb5' }}
         >
-          <ArrowLeft size={16} />
+          <BackArrow size={16} />
         </button>
         <h1 className="text-18 font-medium text-content-primary">Settings</h1>
       </div>
@@ -323,6 +327,27 @@ export default function Settings() {
           >
             {inviteBusy ? 'Creating link…' : 'Copy invite link'}
           </button>
+        </section>
+
+        {/* Language */}
+        <section>
+          <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-2">Language</p>
+          <div
+            className="flex items-center justify-between bg-white rounded-card px-4 py-3"
+            style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
+          >
+            <span className="text-14 text-content-primary">
+              {lang === 'he' ? 'עברית' : 'English'}
+            </span>
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              className="text-13 font-medium"
+              style={{ color: '#2d6fb5' }}
+            >
+              {lang === 'he' ? 'Switch to English' : 'עברית'}
+            </button>
+          </div>
         </section>
 
         {/* Account */}

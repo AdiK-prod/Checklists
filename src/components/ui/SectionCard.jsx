@@ -4,6 +4,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, GripVertical, Check, BookmarkPlus, X } from 'lucide-react'
 import Avatar from './Avatar'
+import ActionMenu from './ActionMenu'
 import { getSectionIconMeta } from '../../lib/sectionIcons'
 import { isDefaultBucketSubcategoryName } from '../../lib/templateLayout'
 
@@ -28,6 +29,7 @@ import { isDefaultBucketSubcategoryName } from '../../lib/templateLayout'
  * @param {(itemId: string) => void|Promise<void>} onRemoveItem
  * @param {(sectionId: string, name: string) => Promise<void>} onRenameSectionHeader
  * @param {(sectionId: string) => Promise<void>} onRemoveSectionCard
+ * @param {(itemId: string, label: string) => Promise<void>} [onUpdateItemLabel]
  */
 
 export const SECTION_INLINE_SHELL = {
@@ -168,6 +170,13 @@ function SortableTripItemRow(props) {
         activatorRef={setActivatorNodeRef}
         dragAttributes={attributes}
         dragListeners={listeners}
+        isEditingLabel={props.isEditingLabel}
+        editDraft={props.editDraft}
+        onEditDraftChange={props.onEditDraftChange}
+        onEditCommit={props.onEditCommit}
+        onEditCancel={props.onEditCancel}
+        onStartEdit={props.onStartEdit}
+        editCancelRef={props.editCancelRef}
       />
     </div>
   )
@@ -185,6 +194,14 @@ function TripItemRow({
   activatorRef,
   dragAttributes,
   dragListeners,
+  // Inline label editing
+  isEditingLabel,
+  editDraft,
+  onEditDraftChange,
+  onEditCommit,
+  onEditCancel,
+  onStartEdit,
+  editCancelRef,
 }) {
   const showSaveToTemplate = Boolean(
     canSaveToTemplate && !item.savedToTemplate && item.isManuallyAdded,
@@ -254,30 +271,39 @@ function TripItemRow({
         {item.checked && <Check size={11} color="white" strokeWidth={3} />}
       </div>
 
-      <span
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
-        onPointerDown={
-          canDelete
-            ? () => {
-                clearLongPress()
-                longPressTimer.current = window.setTimeout(() => setShowDelete(true), 500)
-              }
-            : undefined
-        }
-        onPointerUp={canDelete ? clearLongPress : undefined}
-        onPointerLeave={canDelete ? clearLongPress : undefined}
-        onPointerCancel={canDelete ? clearLongPress : undefined}
-        onClick={onToggle}
-        className={[
-          'flex-1 text-13 min-w-0 transition-colors cursor-pointer text-left bg-transparent border-0 p-0',
-          item.checked ? 'line-through' : 'text-content-primary',
-        ].join(' ')}
-        style={item.checked ? { color: '#9a9a9a' } : undefined}
-      >
-        {item.label}
-      </span>
+      {isEditingLabel ? (
+        <input
+          type="text"
+          autoFocus
+          value={editDraft}
+          onChange={e => onEditDraftChange(e.target.value)}
+          onBlur={() => {
+            if (!editCancelRef.current) onEditCommit()
+            editCancelRef.current = false
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
+            if (e.key === 'Escape') onEditCancel(item.label)
+          }}
+          onClick={e => e.stopPropagation()}
+          className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
+          style={{ background: '#f5f4f1', borderRadius: 8 }}
+        />
+      ) : (
+        <span
+          role={item.checked ? undefined : 'button'}
+          tabIndex={item.checked ? undefined : 0}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
+          onClick={item.checked ? onToggle : () => { clearLongPress(); onStartEdit(item) }}
+          className={[
+            'flex-1 text-item-label min-w-0 transition-colors text-start bg-transparent border-0 p-0',
+            item.checked ? 'line-through cursor-pointer' : 'text-content-primary cursor-text',
+          ].join(' ')}
+          style={item.checked ? { color: '#9a9a9a' } : undefined}
+        >
+          {item.label}
+        </span>
+      )}
 
       {saveFailed && (
         <span className="text-11 flex-shrink-0" style={{ color: '#c03434' }}>
@@ -321,8 +347,19 @@ function TripItemRow({
   )
 }
 
-/** Template editing row — visual checkbox stub, gripped reorder, × remove */
-function SortableTemplateItemRow({ item, showBorder, onRemove }) {
+/** Template editing row — visual checkbox stub, gripped reorder, × remove, tap-to-edit label */
+function SortableTemplateItemRow({
+  item,
+  showBorder,
+  onRemove,
+  isEditingLabel,
+  editDraft,
+  onEditDraftChange,
+  onEditCommit,
+  onEditCancel,
+  onStartEdit,
+  editCancelRef,
+}) {
   const {
     attributes,
     listeners,
@@ -365,7 +402,34 @@ function SortableTemplateItemRow({ item, showBorder, onRemove }) {
         style={{ border: '1.5px solid rgba(0,0,0,0.2)' }}
         aria-hidden
       />
-      <span className="flex-1 text-13 min-w-0 text-content-primary text-left">{item.label}</span>
+      {isEditingLabel ? (
+        <input
+          type="text"
+          autoFocus
+          value={editDraft}
+          onChange={e => onEditDraftChange(e.target.value)}
+          onBlur={() => {
+            if (!editCancelRef.current) onEditCommit()
+            editCancelRef.current = false
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
+            if (e.key === 'Escape') onEditCancel(item.label)
+          }}
+          className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
+          style={{ background: '#f5f4f1', borderRadius: 8 }}
+        />
+      ) : (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={() => onStartEdit(item)}
+          onKeyDown={e => e.key === 'Enter' && onStartEdit(item)}
+          className="flex-1 text-item-label min-w-0 text-content-primary text-start cursor-text bg-transparent border-0 p-0"
+        >
+          {item.label}
+        </span>
+      )}
       <button
         type="button"
         onClick={onRemove}
@@ -395,6 +459,7 @@ export default function SectionCard({
   onRemoveItem,
   onRenameSectionHeader,
   onRemoveSectionCard,
+  onUpdateItemLabel,
 }) {
   const [expanded, setExpanded] = useState(true)
   const [newItemIds, setNewItemIds] = useState(new Set())
@@ -404,8 +469,12 @@ export default function SectionCard({
   const [addCategoryDraft, setAddCategoryDraft] = useState('')
   const [slot, setSlot] = useState(null)
   const [draftItem, setDraftItem] = useState('')
+  const sectionNameCancelRef = useRef(false)
   const [renameCatId, setRenameCatId] = useState(null)
   const [renameCatDraft, setRenameCatDraft] = useState('')
+  const [editingItemId, setEditingItemId] = useState(null)
+  const [editingItemDraft, setEditingItemDraft] = useState('')
+  const itemEditCancelRef = useRef(false)
 
   const isTrip = mode === 'trip'
 
@@ -459,10 +528,10 @@ export default function SectionCard({
     minWidth: 0,
     margin: 0,
     padding: 0,
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: 500,
     color: '#6b6b6b',
-    letterSpacing: '0.07em',
+    letterSpacing: '0.05em',
     textTransform: 'uppercase',
     marginTop: marginTopPx,
     marginBottom: 4,
@@ -477,6 +546,30 @@ export default function SectionCard({
   const closeSlotOnly = () => {
     setSlot(null)
     setDraftItem('')
+  }
+
+  const startItemEdit = item => {
+    setEditingItemId(item.id)
+    setEditingItemDraft(item.label)
+    itemEditCancelRef.current = false
+  }
+
+  const commitItemEdit = async () => {
+    if (itemEditCancelRef.current) { itemEditCancelRef.current = false; return }
+    const trimmed = editingItemDraft.trim()
+    if (!trimmed || !onUpdateItemLabel) { setEditingItemId(null); return }
+    try {
+      await onUpdateItemLabel(editingItemId, trimmed)
+    } catch {
+      window.alert('Could not rename item.')
+    }
+    setEditingItemId(null)
+  }
+
+  const cancelItemEdit = originalLabel => {
+    itemEditCancelRef.current = true
+    setEditingItemDraft(originalLabel)
+    setEditingItemId(null)
   }
 
   const startCatTail = subId => {
@@ -623,6 +716,13 @@ export default function SectionCard({
                   onSave={() => handleSaveTpl(item.id)}
                   saveFailed={saveErrors[item.id]}
                   onDelete={() => onRemoveItem(item.id)}
+                  isEditingLabel={editingItemId === item.id}
+                  editDraft={editingItemId === item.id ? editingItemDraft : ''}
+                  onEditDraftChange={setEditingItemDraft}
+                  onEditCommit={commitItemEdit}
+                  onEditCancel={cancelItemEdit}
+                  onStartEdit={startItemEdit}
+                  editCancelRef={itemEditCancelRef}
                 />
               </div>
             ))}
@@ -651,6 +751,13 @@ export default function SectionCard({
                 item={item}
                 showBorder={index < sortedItems.length - 1}
                 onRemove={() => onRemoveItem(item.id)}
+                isEditingLabel={editingItemId === item.id}
+                editDraft={editingItemId === item.id ? editingItemDraft : ''}
+                onEditDraftChange={setEditingItemDraft}
+                onEditCommit={commitItemEdit}
+                onEditCancel={cancelItemEdit}
+                onStartEdit={startItemEdit}
+                editCancelRef={itemEditCancelRef}
               />
             ))}
           </SortableContext>
@@ -811,23 +918,16 @@ export default function SectionCard({
         )}
         <span className="flex-1" />
         {!editingThis ? (
-          <div className="flex items-center gap-2 shrink-0" style={{ marginTop: mt > 0 ? 1 : -1 }}>
-            <button
-              type="button"
-              className="text-11 bg-transparent border-0 cursor-pointer p-0"
-              style={SECTION_LINK_ACCENT}
-              onClick={() => startRenameCat(sub)}
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              className="group text-11 bg-transparent border-0 cursor-pointer p-0 hover:text-[#c03434]"
-              style={{ color: '#6b6b6b' }}
-              onClick={() => promptRemoveCat(sub)}
-            >
-              Remove
-            </button>
+          <div className="flex items-center shrink-0" style={{ marginTop: mt > 0 ? 1 : -1 }}>
+            <ActionMenu
+              buttonSize={20}
+              iconSize={14}
+              buttonStyle={{ color: '#9a9a9a' }}
+              items={[
+                { label: 'Rename', onClick: () => startRenameCat(sub) },
+                { label: 'Remove', onClick: () => promptRemoveCat(sub), danger: true },
+              ]}
+            />
           </div>
         ) : null}
       </div>
@@ -843,48 +943,92 @@ export default function SectionCard({
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
-        onClick={() => setExpanded(e => !e)}
+        onClick={sectionNameEditOpen ? undefined : () => setExpanded(e => !e)}
         onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          if (!sectionNameEditOpen && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault()
             setExpanded(v => !v)
           }
         }}
-        className="w-full flex items-center gap-2.5 px-[14px] py-[13px] cursor-pointer text-left"
+        className={[
+          'w-full flex items-center gap-2.5 px-[16px] py-[14px] text-start',
+          sectionNameEditOpen ? '' : 'cursor-pointer',
+        ].join(' ')}
         style={headerDividerStyle}
       >
         {variant === 'shared' && SharedIc ? (
           <div
             className="flex items-center justify-center flex-shrink-0"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              backgroundColor: iconMeta.bg,
-            }}
+            style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: iconMeta.bg }}
           >
             <SharedIc size={16} style={{ color: iconMeta.color }} />
           </div>
         ) : (
           <Avatar member={displayMember} size={32} />
         )}
-        <span className="text-14 font-medium text-content-primary text-left shrink-0 max-w-[38%] truncate">
-          {section.name}
-        </span>
-        <button
-          type="button"
-          className="text-11 bg-transparent border-0 cursor-pointer p-0 shrink-0"
-          style={SECTION_LINK_ACCENT}
-          onClick={e => {
-            e.stopPropagation()
-            if (slot === 'cat-add') closeSlotOnly()
-            else openAddCategorySlot()
-          }}
-        >
-          + Add category
-        </button>
-        <span className="flex-1 min-w-2" />
-        <span className="text-12 text-content-secondary whitespace-nowrap mr-1">
+
+        {sectionNameEditOpen ? (
+          <div
+            className="flex-1 flex items-center gap-2 min-w-0"
+            onClick={e => e.stopPropagation()}
+          >
+            <input
+              type="text"
+              autoFocus
+              value={sectionNameDraft}
+              onChange={e => setSectionNameDraft(e.target.value)}
+              onBlur={() => {
+                if (!sectionNameCancelRef.current) handleSaveRenameSectionHeader()
+                sectionNameCancelRef.current = false
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  sectionNameCancelRef.current = false
+                  e.currentTarget.blur()
+                }
+                if (e.key === 'Escape') {
+                  sectionNameCancelRef.current = true
+                  setSectionNameDraft(section.name)
+                  setSectionNameEditOpen(false)
+                }
+              }}
+              className="flex-1 min-w-0 text-14 rounded-input px-2 py-1 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+            />
+            <button
+              type="button"
+              onPointerDown={() => { sectionNameCancelRef.current = true }}
+              onClick={() => { setSectionNameDraft(section.name); setSectionNameEditOpen(false) }}
+              className="text-12 text-content-secondary bg-transparent border-0 cursor-pointer p-0 shrink-0"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <>
+            <span className="text-14 font-medium text-content-primary text-start shrink-0 max-w-[38%] truncate">
+              {section.name}
+            </span>
+            <ActionMenu
+              buttonSize={28}
+              iconSize={16}
+              buttonStyle={{ color: '#6b6b6b' }}
+              items={[
+                {
+                  label: 'Add category',
+                  onClick: () => {
+                    if (slot === 'cat-add') closeSlotOnly()
+                    else { setExpanded(true); openAddCategorySlot() }
+                  },
+                },
+                { label: 'Rename', onClick: () => setSectionNameEditOpen(true) },
+                { label: 'Remove', onClick: handleRemoveSection, danger: true },
+              ]}
+            />
+            <span className="flex-1 min-w-2" />
+          </>
+        )}
+
+        <span className="text-12 text-content-secondary whitespace-nowrap me-1">
           {headerSecondary}
         </span>
         <ChevronDown
@@ -898,7 +1042,7 @@ export default function SectionCard({
       </div>
 
       {slot === 'cat-add' ? (
-        <div className="px-[14px] py-2" style={{ borderBottom: '0.5px solid rgba(0,0,0,0.08)' }}>
+        <div className="px-[16px] py-2" style={{ borderBottom: '0.5px solid rgba(0,0,0,0.08)' }}>
           <SectionInlineShell style={{ marginBottom: 0 }}>
             <input
               type="text"
@@ -940,56 +1084,7 @@ export default function SectionCard({
         }}
       >
         <div style={{ overflow: 'hidden' }}>
-          <div className="px-[14px] pt-2 pb-1 flex flex-wrap items-center justify-end gap-2 border-b border-[rgba(0,0,0,0.06)]">
-            {sectionNameEditOpen ? (
-              <div className="flex flex-1 flex-wrap gap-2 items-center min-w-0">
-                <input
-                  type="text"
-                  value={sectionNameDraft}
-                  onChange={e => setSectionNameDraft(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveRenameSectionHeader()}
-                  className="flex-1 min-w-[8rem] text-13 rounded-input px-2 py-1.5 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveRenameSectionHeader}
-                  className="text-12 font-medium text-navy bg-transparent border-0 cursor-pointer p-0"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSectionNameDraft(section.name)
-                    setSectionNameEditOpen(false)
-                  }}
-                  className="text-12 text-content-secondary bg-transparent border-0 cursor-pointer p-0"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setSectionNameEditOpen(true)}
-                  className="text-11 bg-transparent border-0 cursor-pointer p-0"
-                  style={{ color: '#2d6fb5' }}
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRemoveSection}
-                  className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0"
-                >
-                  Remove
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="px-[14px] pt-[11px] pb-[13px]">
+          <div className="px-[16px] pt-[12px] pb-[14px]">
             {isFlatBucketOnly ? (
               <>
                 {defaultSub ? renderSortableBlockByMode(defaultSub) : null}

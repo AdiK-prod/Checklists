@@ -1,54 +1,29 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, ArrowLeft, Sparkles } from 'lucide-react'
+import { X, ArrowLeft } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useHousehold } from '../../hooks/useHousehold'
 import { useTemplates } from '../../hooks/useTemplates'
 import { useEnsureTemplatesSeeded } from '../../hooks/useEnsureTemplatesSeeded'
-import { supabase } from '../../lib/supabase'
-import { createTripFromWizard, fetchTemplateTree, templateTreeToBaseItems } from '../../lib/tripService'
-import { weatherSummaryForTrip } from '../../lib/tripWeatherSummary'
+import { createTripFromWizard } from '../../lib/tripService'
+import { fetchWeather } from '../../lib/weatherService'
 import { asArray } from '../../lib/transforms'
 import StepIndicator from '../wizard/StepIndicator'
 import Step1Template from '../wizard/Step1Template'
 import Step2Travellers from '../wizard/Step2Travellers'
 import Step3Details from '../wizard/Step3Details'
-import Step4Suggestions from '../wizard/Step4Suggestions'
 
-function mapAiToWizardSuggestions(apiList, travellerMembers) {
-  const ids = travellerMembers.map(m => m.id)
-  return asArray(apiList).map((s, i) => {
-    let assigned = []
-    if (s.assignToAll) {
-      assigned = [...ids]
-    } else {
-      for (const n of s.memberNames || []) {
-        const m = travellerMembers.find(
-          t => t.name.trim().toLowerCase() === String(n).trim().toLowerCase()
-        )
-        if (m) assigned.push(m.id)
-      }
-      if (assigned.length === 0) assigned = [...ids]
-    }
-    return {
-      id:                 `ai-${i}-${Date.now()}`,
-      label:              s.label,
-      reason:             s.reason,
-      category:           s.category || 'Other',
-      memberIds:          ids,
-      hasAllChip:         true,
-      assignedTo:         assigned,
-      assignToAll:        Boolean(s.assignToAll),
-      checked:            true,
-      personSpecificNote: s.personSpecificNote,
-    }
-  })
-}
+// TODO: Re-enable AI suggestions — see /api/suggest.js
+// import { supabase } from '../../lib/supabase'
+// import { fetchTemplateTree, templateTreeToBaseItems } from '../../lib/tripService'
+// import { weatherSummaryForTrip } from '../../lib/tripWeatherSummary'
+// import Step4Suggestions from '../wizard/Step4Suggestions'
+// function mapAiToWizardSuggestions(apiList, travellerMembers) { ... }
 
 export default function Wizard() {
   const { household, user }     = useAuth()
   const navigate                = useNavigate()
-  const { members, loading: membersLoading }     = useHousehold(household?.id)
+  const { members, loading: membersLoading }    = useHousehold(household?.id)
   const { templates, loading: templatesLoading, refetch: refetchTemplates } = useTemplates(household?.id)
   useEnsureTemplatesSeeded(
     household?.id,
@@ -62,9 +37,6 @@ export default function Wizard() {
   const [step, setStep]                         = useState(1)
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
   const [selectedTravellers, setSelectedTravellers] = useState(new Set())
-  const [suggestions, setSuggestions]           = useState([])
-  const [aiLoading, setAiLoading]             = useState(false)
-  const [aiError, setAiError]                 = useState(false)
   const [generating, setGenerating]           = useState(false)
   const [tripFields, setTripFields]           = useState({
     destination: '',
@@ -72,16 +44,21 @@ export default function Wizard() {
     datesTo:     '',
     tripType:    '',
   })
-
-  const derivedWeather = useMemo(
-    () => weatherSummaryForTrip(tripFields.datesFrom, tripFields.datesTo),
-    [tripFields.datesFrom, tripFields.datesTo]
-  )
+  const [weatherForecast, setWeatherForecast] = useState(null)
   const [fieldErrors, setFieldErrors]         = useState({})
-  const aiMetaRef = useRef({ promptSent: '', responseRaw: '', total: 0 })
-  const fetchStartedStepRef = useRef(0)
-  const generateInFlightRef = useRef(false)
-  const [step4Ready, setStep4Ready] = useState(false)
+  const generateInFlightRef                   = useRef(false)
+  const weatherDebounceRef                    = useRef(null)
+
+  // TODO: Re-enable AI suggestions — see /api/suggest.js
+  // const [suggestions, setSuggestions] = useState([])
+  // const [aiLoading, setAiLoading] = useState(false)
+  // const [aiError, setAiError] = useState(false)
+  // const derivedWeather = useMemo(() => weatherSummaryForTrip(tripFields.datesFrom, tripFields.datesTo), [...])
+  // const aiMetaRef = useRef({ promptSent: '', responseRaw: '', total: 0 })
+  // const fetchStartedStepRef = useRef(0)
+  // const [step4Ready, setStep4Ready] = useState(false)
+  // const loadStep4Ai = useCallback(async () => { ... }, [...])
+  // useEffect(() => { if (step !== 4) { ... } loadStep4Ai() }, [step, loadStep4Ai])
 
   useEffect(() => {
     if (templates.length > 0 && !selectedTemplateId) {
@@ -94,81 +71,6 @@ export default function Wizard() {
       setSelectedTravellers(new Set(members.map(m => m.id)))
     }
   }, [members, selectedTravellers.size])
-
-  const travellerMembers = (Array.isArray(members) ? members : []).filter(m => selectedTravellers.has(m.id))
-
-  const loadStep4Ai = useCallback(async () => {
-    if (!selectedTemplateId || travellerMembers.length === 0) return
-    setStep4Ready(false)
-    setAiLoading(true)
-    setAiError(false)
-    setSuggestions([])
-
-    let baseRows = []
-    try {
-      const tree = await fetchTemplateTree(supabase, selectedTemplateId)
-      baseRows = templateTreeToBaseItems(tree)
-    } catch {
-      setAiLoading(false)
-      setAiError(true)
-      setStep4Ready(true)
-      return
-    }
-
-    const tripContext = {
-      destination: tripFields.destination.trim(),
-      datesFrom:   tripFields.datesFrom,
-      datesTo:     tripFields.datesTo,
-      weather:     derivedWeather,
-      tripType:    tripFields.tripType.trim(),
-      travellers:  travellerMembers.map(m => ({
-        name: m.name,
-        role: m.role,
-        age:  m.age,
-      })),
-    }
-
-    let json
-    try {
-      const res = await fetch('/api/suggest', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          tripContext,
-          baseItems: baseRows || [],
-        }),
-      })
-      json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Request failed')
-    } catch {
-      setAiLoading(false)
-      setAiError(true)
-      aiMetaRef.current = { promptSent: '', responseRaw: '', total: 0 }
-      setStep4Ready(true)
-      return
-    }
-
-    aiMetaRef.current = {
-      promptSent:  json.promptSent || '',
-      responseRaw: json.responseRaw || '',
-      total:       (json.suggestions || []).length,
-    }
-
-    const mapped = mapAiToWizardSuggestions(json.suggestions || [], travellerMembers)
-    setSuggestions(mapped)
-    setAiLoading(false)
-    setStep4Ready(true)
-  }, [selectedTemplateId, travellerMembers, tripFields, derivedWeather])
-
-  useEffect(() => {
-    if (step !== 4) {
-      if (step < 4) fetchStartedStepRef.current = 0
-      return
-    }
-    if (fetchStartedStepRef.current === 4) return
-    fetchStartedStepRef.current = 4
-    loadStep4Ai()
-  }, [step, loadStep4Ai])
 
   function goNext() {
     if (step === 3) {
@@ -183,15 +85,12 @@ export default function Wizard() {
       if (Object.keys(e).length) return
     }
     if (step === 2 && selectedTravellers.size === 0) return
-    setStep(s => Math.min(s + 1, 4))
+    setStep(s => Math.min(s + 1, 3))
   }
 
   function goBack() {
     if (step === 1) navigate('/', { state: { direction: 'back' } })
-    else {
-      if (step === 4) fetchStartedStepRef.current = 0
-      setStep(s => s - 1)
-    }
+    else setStep(s => s - 1)
   }
 
   const toggleTraveller = (id) => {
@@ -202,30 +101,35 @@ export default function Wizard() {
     })
   }
 
-  const toggleSuggestion = (id) =>
-    setSuggestions(prev => prev.map(s => s.id === id ? { ...s, checked: !s.checked } : s))
-
-  const toggleAssign = (suggId, memberId) =>
-    setSuggestions(prev => prev.map(s => {
-      if (s.id !== suggId) return s
-      const at = Array.isArray(s.assignedTo) ? s.assignedTo : []
-      const next = at.includes(memberId)
-        ? at.filter(x => x !== memberId)
-        : [...at, memberId]
-      return { ...s, assignedTo: next }
-    }))
-
-  const toggleAll = (suggId) =>
-    setSuggestions(prev => prev.map(s => {
-      if (s.id !== suggId) return s
-      const at = Array.isArray(s.assignedTo) ? s.assignedTo : []
-      const mids = Array.isArray(s.memberIds) ? s.memberIds : []
-      const allSelected = mids.every(id => at.includes(id))
-      return { ...s, assignedTo: allSelected ? [] : [...mids] }
-    }))
+  const triggerWeatherFetch = (destination, datesFrom, datesTo) => {
+    if (weatherDebounceRef.current) clearTimeout(weatherDebounceRef.current)
+    if (!destination.trim()) return
+    weatherDebounceRef.current = setTimeout(async () => {
+      try {
+        const { forecast } = await fetchWeather({
+          destination: destination.trim(),
+          dateFrom: datesFrom,
+          dateTo:   datesTo,
+        })
+        setWeatherForecast(forecast?.length ? forecast : null)
+      } catch {
+        // Silent — weather is non-blocking
+      }
+    }, 500)
+  }
 
   const changeTripField = (key, value) => {
-    setTripFields(f => ({ ...f, [key]: value }))
+    setTripFields(f => {
+      const next = { ...f, [key]: value }
+      if (key === 'destination' || key === 'datesFrom' || key === 'datesTo') {
+        triggerWeatherFetch(
+          key === 'destination' ? value : next.destination,
+          key === 'datesFrom'   ? value : next.datesFrom,
+          key === 'datesTo'     ? value : next.datesTo,
+        )
+      }
+      return next
+    })
     setFieldErrors(e => {
       const n = { ...e }
       delete n[key]
@@ -234,16 +138,24 @@ export default function Wizard() {
     })
   }
 
-  async function generateTrip(suggestionsOverride = null) {
+  async function generateTrip() {
     if (!household?.id || !user?.id || !selectedTemplateId) return
     if (selectedTravellers.size === 0) return
     if (generateInFlightRef.current) return
 
+    // Validate Step 3 before generating
+    const e = {}
+    if (!tripFields.destination.trim()) e.destination = 'Required'
+    if (!tripFields.datesFrom) e.dates = 'Start date required'
+    if (!tripFields.datesTo) e.dates = e.dates || 'End date required'
+    if (tripFields.datesFrom && tripFields.datesTo && tripFields.datesTo < tripFields.datesFrom) {
+      e.dates = 'End date must be on or after start'
+    }
+    setFieldErrors(e)
+    if (Object.keys(e).length) return
+
     generateInFlightRef.current = true
     setGenerating(true)
-    const sugg = asArray(suggestionsOverride ?? suggestions)
-    const accepted = sugg.filter(s => s.checked).length
-    const total    = sugg.length
 
     try {
       const { tripId } = await createTripFromWizard({
@@ -254,15 +166,11 @@ export default function Wizard() {
         destination:   tripFields.destination.trim(),
         datesFrom:     tripFields.datesFrom,
         datesTo:       tripFields.datesTo,
-        weather:       derivedWeather,
+        weather:       weatherForecast ? { forecast: weatherForecast } : null,
         tripType:      tripFields.tripType.trim(),
-        suggestions:   sugg,
-        aiLog: {
-          promptSent:          aiMetaRef.current.promptSent || '(skipped or failed)',
-          responseRaw:         aiMetaRef.current.responseRaw || '',
-          suggestionsAccepted: accepted,
-          suggestionsTotal:    total,
-        },
+        // TODO: Re-enable AI suggestions — see /api/suggest.js
+        // suggestions: [],
+        // aiLog: { promptSent: '', responseRaw: '', suggestionsAccepted: 0, suggestionsTotal: 0 },
       })
       navigate(`/trips/${tripId}`, { state: { direction: 'forward' } })
     } catch (err) {
@@ -280,27 +188,9 @@ export default function Wizard() {
     }
   }
 
-  const skipAiAndGenerate = async () => {
-    setSuggestions([])
-    setAiError(false)
-    await generateTrip([])
-  }
-
-  const kidCount = [...selectedTravellers].filter(id =>
-    asArray(members).find(m => m.id === id)?.role === 'kid'
-  ).length
-
-  const suggestionSubtitle = `Based on ${tripFields.destination.trim() || 'your trip'}${kidCount > 0 ? ` with ${kidCount} kid${kidCount !== 1 ? 's' : ''}` : ''}.`
-
-  const isAmberCTA = step === 4
-  const ctaLabel   = step === 1 ? "Next — Who's coming"
-    : step === 2 ? 'Next — Trip details'
-    : step === 3 ? 'Next — Review suggestions'
-    : 'Generate all checklists'
-
   const dataLoading = membersLoading || templatesLoading
-
-  const contentScroll = step === 2 || step === 3 || step === 4
+  const contentScroll = step === 2 || step === 3
+  const isGenerateStep = step === 3
 
   return (
     <div className="flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden bg-page">
@@ -330,7 +220,7 @@ export default function Wizard() {
         )}
       </div>
 
-      <StepIndicator currentStep={step} totalSteps={4} />
+      <StepIndicator currentStep={step} totalSteps={3} />
 
       <div
         className={[
@@ -371,45 +261,6 @@ export default function Wizard() {
               errors={fieldErrors}
             />
           )}
-          {step === 4 && (
-            <>
-              {aiLoading && (
-                <div className="flex flex-col items-center justify-center py-16 gap-3">
-                  <Sparkles size={28} style={{ color: '#c47d1a' }} className="animate-pulse" />
-                  <p className="text-14 text-content-secondary">Generating suggestions…</p>
-                </div>
-              )}
-              {aiError && !aiLoading && (
-                <div className="pt-4">
-                  <p className="text-14 text-content-primary mb-2">Couldn&apos;t generate suggestions</p>
-                  <p className="text-12 text-content-secondary mb-4">
-                    You can skip and create checklists from your template only.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={skipAiAndGenerate}
-                    disabled={generating}
-                    className="w-full py-2.5 rounded-button bg-navy text-white text-14 font-medium disabled:opacity-60"
-                  >
-                    Skip suggestions
-                  </button>
-                </div>
-              )}
-              {!aiLoading && !aiError && suggestions.length > 0 && (
-                <Step4Suggestions
-                  suggestions={suggestions}
-                  members={members}
-                  subtitle={suggestionSubtitle}
-                  onToggle={toggleSuggestion}
-                  onToggleAssign={toggleAssign}
-                  onToggleAll={toggleAll}
-                />
-              )}
-              {step4Ready && !aiLoading && !aiError && suggestions.length === 0 && (
-                <p className="text-13 text-content-secondary pt-4">No extra suggestions — continue to generate.</p>
-              )}
-            </>
-          )}
         </div>
       </div>
 
@@ -418,19 +269,19 @@ export default function Wizard() {
           type="button"
           disabled={
             generating ||
-            (step === 2 && selectedTravellers.size === 0) ||
-            (step === 4 && aiLoading)
+            (step === 2 && selectedTravellers.size === 0)
           }
-          onClick={step === 4 ? generateTrip : goNext}
-          className={[
-            'w-full flex items-center justify-center gap-2 rounded-button py-[13px] text-15 font-medium text-white transition-colors disabled:opacity-60',
-            isAmberCTA ? 'cta-pulse' : '',
-            isAmberCTA ? 'bg-amber hover:bg-amber/90' : 'bg-navy hover:bg-navy-hover',
-          ].join(' ')}
-          style={isAmberCTA ? { boxShadow: '0 2px 8px rgba(196,125,26,0.30)' } : {}}
+          onClick={isGenerateStep ? generateTrip : goNext}
+          className="w-full flex items-center justify-center gap-2 rounded-button py-[13px] text-btn font-medium text-white bg-navy hover:bg-navy-hover transition-colors disabled:opacity-60"
         >
-          {isAmberCTA && <Sparkles size={16} />}
-          {generating ? 'Creating…' : ctaLabel}
+          {generating
+            ? 'Creating…'
+            : isGenerateStep
+              ? 'Generate all checklists'
+              : step === 1
+                ? "Next — Who's coming"
+                : 'Next — Trip details'
+          }
         </button>
       </div>
     </div>

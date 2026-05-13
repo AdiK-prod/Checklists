@@ -1,15 +1,14 @@
 import { useState } from 'react'
-import { Plane, Car, Moon, Trash2 } from 'lucide-react'
+import { Plane, Car, Moon } from 'lucide-react'
 import { formatTripDates, describeTravellers } from '../../lib/utils'
+import ActionMenu from './ActionMenu'
 
-// Color palette per trip, derived from id hash for consistency
 const TILE_PALETTES = [
   { upcoming: { bg: '#3d6494', color: '#ffffff' }, completed: { bg: '#E6F1FB', color: '#185FA5' } },
   { upcoming: { bg: '#2a9d6e', color: '#ffffff' }, completed: { bg: '#E1F5EE', color: '#0F6E56' } },
   { upcoming: { bg: '#c47d1a', color: '#ffffff' }, completed: { bg: '#FAEEDA', color: '#854F0B' } },
   { upcoming: { bg: '#9b6b9b', color: '#ffffff' }, completed: { bg: '#F3E8F3', color: '#6B2F6B' } },
 ]
-
 const PAST_TILE = { bg: '#e8e5e0', color: '#7a7873' }
 
 function paletteFromId(id = '') {
@@ -26,10 +25,13 @@ function iconFromTripType(tripType = '') {
   return Plane
 }
 
-export default function TripCard({ trip, members, onClick, onDelete, isPast = false }) {
+/**
+ * @param {{ trip: object, members: object[], onClick?: () => void, onDelete?: () => void, onEdit?: () => void, isPast?: boolean }} props
+ */
+export default function TripCard({ trip, members, onClick, onDelete, onEdit, isPast = false }) {
   const [hovered, setHovered] = useState(false)
 
-  const isUpcoming = trip.status === 'upcoming' && !isPast
+  const isUpcoming  = trip.status === 'upcoming' && !isPast
   const isClickable = Boolean(onClick)
 
   const progress      = trip.total > 0 ? Math.round((trip.done / trip.total) * 100) : 0
@@ -43,6 +45,11 @@ export default function TripCard({ trip, members, onClick, onDelete, isPast = fa
 
   const borderColor =
     hovered && isClickable ? 'rgba(0,0,0,0.16)' : isPast ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.08)'
+
+  const menuItems = [
+    ...(onEdit   ? [{ label: 'Edit',   onClick: onEdit }]             : []),
+    ...(onDelete ? [{ label: 'Remove', onClick: onDelete, danger: true }] : []),
+  ]
 
   return (
     <div
@@ -68,14 +75,14 @@ export default function TripCard({ trip, members, onClick, onDelete, isPast = fa
       <div className="flex-1 min-w-0">
         <p
           className={[
-            'text-14 font-medium truncate leading-snug',
+            'text-card-name font-medium truncate leading-snug',
             isPast ? 'text-content-secondary' : 'text-content-primary',
           ].join(' ')}
         >
           {trip.name}
         </p>
         {meta && (
-          <p className={`text-12 mt-0.5 truncate ${isPast ? 'text-content-hint' : 'text-content-secondary'}`}>
+          <p className={`text-card-meta mt-0.5 truncate ${isPast ? 'text-content-hint' : 'text-content-secondary'}`}>
             {meta}
           </p>
         )}
@@ -89,22 +96,15 @@ export default function TripCard({ trip, members, onClick, onDelete, isPast = fa
         )}
       </div>
 
-      {onDelete && (
-        <button
-          type="button"
-          aria-label="Delete trip"
-          className="flex-shrink-0 p-1.5 rounded-full text-content-hint hover:bg-[#fdecea] hover:text-[#c53030] transition-colors"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-        >
-          <Trash2 size={16} strokeWidth={2} />
-        </button>
-      )}
-
-      {/* Status badge */}
-      {isUpcoming ? (
+      {/* ••• menu or status badge */}
+      {menuItems.length > 0 ? (
+        <ActionMenu
+          buttonSize={28}
+          iconSize={16}
+          buttonStyle={{ color: '#9a9a9a' }}
+          items={menuItems}
+        />
+      ) : isUpcoming ? (
         <span className="flex-shrink-0 px-2 py-0.5 bg-amber-light text-amber-dark rounded-pill text-11 font-medium whitespace-nowrap">
           {progress}%
         </span>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
-import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip } from '../lib/tripService'
+import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip, updateChecklistItemLabel } from '../lib/tripService'
 import {
   normalizeTripDetail,
   buildSectionsTree,
@@ -627,6 +627,14 @@ export function useTripDetail(tripId) {
     })
   }, [])
 
+  const renameChecklistItem = useCallback(async (itemId, label) => {
+    await updateChecklistItemLabel(itemId, label)
+    setTrip(prev => {
+      if (!prev) return prev
+      return { ...prev, sections: updateItemInSections(prev.sections, itemId, { label }) }
+    })
+  }, [])
+
   const reorderItems = useCallback(async (subcategoryId, orderedIds) => {
     if (!tripId || !orderedIds.length) return
     const orderMap = new Map(orderedIds.map((id, idx) => [id, (idx + 1) * 10]))
@@ -1011,6 +1019,7 @@ export function useTripDetail(tripId) {
     addItemToSection,
     quickAddItem,
     removeChecklistItem,
+    renameChecklistItem,
     removeSubcategory,
     renameChecklistSubcategory,
     saveToTemplate,

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Plus, Settings } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
@@ -8,6 +9,8 @@ import { useEnsureTemplatesSeeded } from '../../hooks/useEnsureTemplatesSeeded'
 import { isTripPast } from '../../lib/utils'
 import TripCard from '../ui/TripCard'
 import { SkeletonCard } from '../ui/Skeleton'
+import { refreshWeatherForUpcomingTrips } from '../../lib/weatherService'
+import EditTripSheet from '../ui/EditTripSheet'
 
 export default function Dashboard() {
   const { household } = useAuth()
@@ -24,16 +27,35 @@ export default function Dashboard() {
     refetchTemplates,
   )
 
-  const tripList = Array.isArray(trips) ? trips : []
+  const [editingTrip, setEditingTrip] = useState(null)
+  const [localTrips,  setLocalTrips]  = useState(null)
+
+  const tripList = localTrips ?? (Array.isArray(trips) ? trips : [])
+
+  // Keep localTrips in sync when fresh data arrives from the hook
+  useEffect(() => {
+    if (!loading) setLocalTrips(Array.isArray(trips) ? trips : [])
+  }, [trips, loading])
+
+  useEffect(() => {
+    if (!loading && tripList.length) {
+      refreshWeatherForUpcomingTrips(tripList).catch(() => {})
+    }
+  }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const upcoming = tripList.filter(t => !isTripPast(t))
   const past = tripList
     .filter(t => isTripPast(t))
     .sort((a, b) => String(b.datesFrom || '').localeCompare(String(a.datesFrom || '')))
 
   async function handleDeleteTrip(trip) {
-    if (!window.confirm(`Delete “${trip.name}”? This cannot be undone.`)) return
+    if (!window.confirm(`Remove "${trip.name}" and all its checklists?`)) return
     const { ok } = await deleteTrip(trip.id)
     if (!ok) window.alert('Could not delete the trip. Check your connection and try again.')
+  }
+
+  function handleTripSaved(updated) {
+    setLocalTrips(prev => (prev ?? []).map(t => t.id === updated.id ? { ...t, ...updated } : t))
   }
 
   return (
@@ -96,6 +118,7 @@ export default function Dashboard() {
               members={members}
               isPast={false}
               onClick={() => navigate(`/trips/${trip.id}`, { state: { direction: 'forward' } })}
+              onEdit={() => setEditingTrip(trip)}
               onDelete={() => handleDeleteTrip(trip)}
             />
           ))
@@ -111,12 +134,20 @@ export default function Dashboard() {
                 members={members}
                 isPast
                 onClick={() => navigate(`/trips/${trip.id}`, { state: { direction: 'forward' } })}
+                onEdit={() => setEditingTrip(trip)}
                 onDelete={() => handleDeleteTrip(trip)}
               />
             ))}
           </div>
         )}
       </div>
+
+      <EditTripSheet
+        open={editingTrip !== null}
+        trip={editingTrip}
+        onClose={() => setEditingTrip(null)}
+        onSaved={handleTripSaved}
+      />
     </div>
   )
 }
