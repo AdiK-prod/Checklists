@@ -600,18 +600,14 @@ export function useTripDetail(tripId) {
   )
 
   const removeChecklistItem = useCallback(async itemId => {
-    const raw = rawItemsRef.current.find(i => i.id === itemId)
-    if (!raw?.is_manually_added) return
-
-    const { error: delErr } = await supabase.from('checklist_items').delete().eq('id', itemId)
-    if (delErr) {
-      console.error(delErr)
-      throw delErr
-    }
-
+    // Optimistically remove from state immediately, restore on DB error
+    const rawSnapshot = rawItemsRef.current.slice()
     rawItemsRef.current = rawItemsRef.current.filter(i => i.id !== itemId)
+
+    let restoredSections = null
     setTrip(prev => {
       if (!prev) return prev
+      restoredSections = prev.sections
       const sections = prev.sections.map(sec => ({
         ...sec,
         subcategories: sec.subcategories.map(sub => ({
@@ -625,6 +621,20 @@ export function useTripDetail(tripId) {
         aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
       }
     })
+
+    const { error: delErr } = await supabase.from('checklist_items').delete().eq('id', itemId)
+    if (delErr) {
+      // Restore on failure
+      rawItemsRef.current = rawSnapshot
+      if (restoredSections) {
+        setTrip(prev => prev
+          ? { ...prev, sections: restoredSections, aiSuggestions: buildAiSuggestionsFromSections(restoredSections, prev.travellers) }
+          : prev,
+        )
+      }
+      console.error(delErr)
+      throw delErr
+    }
   }, [])
 
   const renameChecklistItem = useCallback(async (itemId, label) => {

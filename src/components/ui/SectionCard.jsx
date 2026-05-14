@@ -142,7 +142,7 @@ function SubcategoryTailDrop({ subId }) {
   )
 }
 
-/** Trip checklist row (checkbox, save-to-template, long-press delete) */
+/** Trip checklist row (checkbox, save-to-template, swipe/hover delete) */
 function SortableTripItemRow(props) {
   const { item } = props
   const {
@@ -170,13 +170,7 @@ function SortableTripItemRow(props) {
         activatorRef={setActivatorNodeRef}
         dragAttributes={attributes}
         dragListeners={listeners}
-        isEditingLabel={props.isEditingLabel}
-        editDraft={props.editDraft}
-        onEditDraftChange={props.onEditDraftChange}
-        onEditCommit={props.onEditCommit}
-        onEditCancel={props.onEditCancel}
-        onStartEdit={props.onStartEdit}
-        editCancelRef={props.editCancelRef}
+        onDeleteError={props.onDeleteError}
       />
     </div>
   )
@@ -191,10 +185,10 @@ function TripItemRow({
   onSave,
   saveFailed,
   onDelete,
+  onDeleteError,
   activatorRef,
   dragAttributes,
   dragListeners,
-  // Inline label editing
   isEditingLabel,
   editDraft,
   onEditDraftChange,
@@ -203,146 +197,226 @@ function TripItemRow({
   onStartEdit,
   editCancelRef,
 }) {
+  // All items are deletable (rule 1)
+  const isUserAdded = Boolean(item.isManuallyAdded || item.isAiSuggested)
   const showSaveToTemplate = Boolean(
-    canSaveToTemplate && !item.savedToTemplate && item.isManuallyAdded,
+    canSaveToTemplate && !item.savedToTemplate && isUserAdded,
   )
-  const canDelete = Boolean(item.isManuallyAdded)
-  const [showDelete, setShowDelete] = useState(false)
-  const longPressTimer = useRef(null)
-  const touchStartX = useRef(null)
 
-  const clearLongPress = () => {
-    if (longPressTimer.current != null) {
-      window.clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
+  // saveFlash: null | 'saving' | 'saved'  (drives 2-second flash then nothing)
+  const [saveFlash, setSaveFlash]   = useState(null)
+  const saveFlashTimer              = useRef(null)
+
+  // Mobile swipe-to-delete state
+  const [swipeRevealed, setSwipeRevealed] = useState(false)
+  const touchStartX                       = useRef(null)
+  const touchStartY                       = useRef(null)
+
+  // Desktop hover state
+  const [hovered, setHovered] = useState(false)
+
+  useEffect(() => () => {
+    if (saveFlashTimer.current) clearTimeout(saveFlashTimer.current)
+  }, [])
+
+  // Reset swipe reveal when item changes (e.g. after save)
+  useEffect(() => { setSwipeRevealed(false) }, [item.id])
+
+  const handleSave = e => {
+    e.stopPropagation()
+    if (saveFlash === 'saving') return
+    setSaveFlash('saving')
+    Promise.resolve(onSave()).then(() => {
+      setSaveFlash('saved')
+      saveFlashTimer.current = setTimeout(() => setSaveFlash(null), 2000)
+    }).catch(() => {
+      setSaveFlash(null)
+    })
   }
-
-  useEffect(() => () => clearLongPress(), [])
 
   const handleDeleteClick = async e => {
     e.stopPropagation()
+    setSwipeRevealed(false)
     try {
       await onDelete()
     } catch {
-      window.alert('Could not remove item.')
+      onDeleteError?.()
     }
-    setShowDelete(false)
   }
 
-  return (
-    <div
-      className={['flex items-center gap-2 py-[9px]', isNew ? 'item-appear' : ''].join(' ')}
-      style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
-      onTouchStart={e => {
-        touchStartX.current = e.touches[0].clientX
-      }}
-      onTouchEnd={e => {
-        const x0 = touchStartX.current
-        touchStartX.current = null
-        if (x0 == null || !canDelete) return
-        const dx = x0 - e.changedTouches[0].clientX
-        if (dx > 48) setShowDelete(true)
-      }}
-    >
-      <button
-        type="button"
-        ref={activatorRef}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
-        aria-label="Drag to reorder"
-        {...dragAttributes}
-        {...dragListeners}
-      >
-        <GripVertical size={14} style={{ opacity: 0.3 }} />
-      </button>
+  const handleTouchStart = e => {
+    touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
+  }
 
-      <div
-        onClick={onToggle}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
-        className="w-[18px] h-[18px] rounded-[4px] flex items-center justify-center flex-shrink-0 cursor-pointer checkbox-interactive"
-        style={
-          !item.checked
-            ? { border: '1.5px solid rgba(0,0,0,0.2)' }
-            : { backgroundColor: '#2a9d6e' }
-        }
-      >
-        {item.checked && <Check size={11} color="white" strokeWidth={3} />}
-      </div>
+  const handleTouchEnd = e => {
+    const x0 = touchStartX.current
+    const y0 = touchStartY.current
+    touchStartX.current = null
+    touchStartY.current = null
+    if (x0 == null) return
+    const dx = x0 - e.changedTouches[0].clientX
+    const dy = Math.abs(e.changedTouches[0].clientY - y0)
+    // Only treat as horizontal swipe if more horizontal than vertical
+    if (dx > 40 && dy < 20) {
+      setSwipeRevealed(true)
+    } else if (dx < -20) {
+      setSwipeRevealed(false)
+    }
+  }
 
-      {isEditingLabel ? (
-        <input
-          type="text"
-          autoFocus
-          value={editDraft}
-          onChange={e => onEditDraftChange(e.target.value)}
-          onBlur={() => {
-            if (!editCancelRef.current) onEditCommit()
-            editCancelRef.current = false
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
-            if (e.key === 'Escape') onEditCancel(item.label)
-          }}
-          onClick={e => e.stopPropagation()}
-          className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
-          style={{ background: '#f5f4f1', borderRadius: 8 }}
-        />
-      ) : (
-        <span
-          role={item.checked ? undefined : 'button'}
-          tabIndex={item.checked ? undefined : 0}
-          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
-          onClick={item.checked ? onToggle : () => { clearLongPress(); onStartEdit(item) }}
-          className={[
-            'flex-1 text-item-label min-w-0 transition-colors text-start bg-transparent border-0 p-0',
-            item.checked ? 'line-through cursor-pointer' : 'text-content-primary cursor-text',
-          ].join(' ')}
-          style={item.checked ? { color: '#9a9a9a' } : undefined}
-        >
-          {item.label}
+  // Right-action slot: save prompt → 2s flash → nothing
+  const rightAction = (() => {
+    if (saveFlash === 'saved') {
+      return (
+        <span className="flex items-center gap-1 text-11 flex-shrink-0" style={{ color: '#2a9d6e' }}>
+          ✓ Added to template
         </span>
-      )}
-
-      {saveFailed && (
-        <span className="text-11 flex-shrink-0" style={{ color: '#c03434' }}>
-          Couldn&apos;t save
-        </span>
-      )}
-
-      {showSaveToTemplate && (
+      )
+    }
+    if (showSaveToTemplate && saveFlash !== 'saving') {
+      return (
         <button
           type="button"
-          onClick={e => {
-            e.stopPropagation()
-            onSave()
-          }}
+          onClick={handleSave}
           className="flex items-center gap-1 flex-shrink-0 bg-transparent border-0 cursor-pointer p-0"
           style={{ color: '#2d6fb5', fontSize: 11 }}
         >
           <BookmarkPlus size={12} />
           Save to template
         </button>
-      )}
-      {item.savedToTemplate && (
-        <span className="flex items-center gap-1 text-11 flex-shrink-0" style={{ color: '#2a9d6e' }}>
-          <Check size={11} />
-          ✓ Saved
+      )
+    }
+    if (saveFailed) {
+      return (
+        <span className="text-11 flex-shrink-0" style={{ color: '#c03434' }}>
+          Couldn&apos;t save
         </span>
-      )}
+      )
+    }
+    return null
+  })()
 
-      {canDelete && showDelete && (
+  return (
+    <div
+      className={['relative overflow-hidden', isNew ? 'item-appear' : ''].join(' ')}
+      style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Main row content — slides left on swipe to reveal delete zone */}
+      <div
+        className="flex items-center gap-2 py-[9px] pr-1"
+        style={{
+          transform: swipeRevealed ? 'translateX(-56px)' : 'translateX(0)',
+          transition: 'transform 200ms ease',
+        }}
+      >
+        <button
+          type="button"
+          ref={activatorRef}
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
+          aria-label="Drag to reorder"
+          {...dragAttributes}
+          {...dragListeners}
+        >
+          <GripVertical size={14} style={{ opacity: 0.3 }} />
+        </button>
+
+        <div
+          onClick={onToggle}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
+          className="w-[18px] h-[18px] rounded-[4px] flex items-center justify-center flex-shrink-0 cursor-pointer checkbox-interactive"
+          style={
+            !item.checked
+              ? { border: '1.5px solid rgba(0,0,0,0.2)' }
+              : { backgroundColor: '#2a9d6e' }
+          }
+        >
+          {item.checked && <Check size={11} color="white" strokeWidth={3} />}
+        </div>
+
+        {isEditingLabel ? (
+          <input
+            type="text"
+            autoFocus
+            value={editDraft}
+            onChange={e => onEditDraftChange(e.target.value)}
+            onBlur={() => {
+              if (!editCancelRef.current) onEditCommit()
+              editCancelRef.current = false
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
+              if (e.key === 'Escape') onEditCancel(item.label)
+            }}
+            onClick={e => e.stopPropagation()}
+            className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
+            style={{ background: '#f5f4f1', borderRadius: 8 }}
+          />
+        ) : (
+          <span
+            role={item.checked ? undefined : 'button'}
+            tabIndex={item.checked ? undefined : 0}
+            onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onToggle()}
+            onClick={item.checked ? onToggle : () => onStartEdit(item)}
+            className={[
+              'flex-1 text-item-label min-w-0 transition-colors text-start bg-transparent border-0 p-0',
+              item.checked ? 'line-through cursor-pointer' : 'text-content-primary cursor-text',
+            ].join(' ')}
+            style={item.checked ? { color: '#9a9a9a' } : undefined}
+          >
+            {item.label}
+          </span>
+        )}
+
+        {/* Right action (save / flash / error) */}
+        {rightAction}
+
+        {/* Desktop hover × */}
         <button
           type="button"
           onClick={handleDeleteClick}
-          className="flex-shrink-0 text-11 font-medium px-1.5 py-0.5 rounded bg-transparent border-0 cursor-pointer"
-          style={{ color: '#c03434' }}
           aria-label="Remove item"
+          className="flex-shrink-0 flex items-center justify-center bg-transparent border-0 cursor-pointer rounded"
+          style={{
+            width: 24,
+            height: 24,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? 'auto' : 'none',
+            transition: 'opacity 120ms',
+            color: '#9a9a9a',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#e24b4a' }}
+          onMouseLeave={e => { e.currentTarget.style.color = '#9a9a9a' }}
         >
-          ×
+          <X size={14} strokeWidth={2} />
         </button>
-      )}
+      </div>
+
+      {/* Mobile swipe-revealed red delete zone */}
+      <button
+        type="button"
+        onClick={handleDeleteClick}
+        aria-label="Remove item"
+        className="absolute top-0 right-0 bottom-0 flex items-center justify-center"
+        style={{
+          width: 56,
+          backgroundColor: '#e24b4a',
+          borderRadius: '0 8px 8px 0',
+          border: 'none',
+          cursor: 'pointer',
+          opacity: swipeRevealed ? 1 : 0,
+          pointerEvents: swipeRevealed ? 'auto' : 'none',
+          transition: 'opacity 200ms ease',
+        }}
+      >
+        <X size={16} color="white" strokeWidth={2.5} />
+      </button>
     </div>
   )
 }
@@ -457,6 +531,7 @@ export default function SectionCard({
   onToggleItem,
   onSaveToTemplate,
   onRemoveItem,
+  onRemoveItemError,
   onRenameSectionHeader,
   onRemoveSectionCard,
   onUpdateItemLabel,
@@ -716,6 +791,7 @@ export default function SectionCard({
                   onSave={() => handleSaveTpl(item.id)}
                   saveFailed={saveErrors[item.id]}
                   onDelete={() => onRemoveItem(item.id)}
+                  onDeleteError={onRemoveItemError}
                   isEditingLabel={editingItemId === item.id}
                   editDraft={editingItemId === item.id ? editingItemDraft : ''}
                   onEditDraftChange={setEditingItemDraft}

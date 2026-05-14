@@ -137,6 +137,14 @@ export default function TripPage() {
   const [forecastData, setForecastData] = useState(null)
   const [editSheetOpen, setEditSheetOpen] = useState(false)
   const [localTrip, setLocalTrip] = useState(null)
+  const [toastMsg, setToastMsg] = useState(null)
+  const toastTimer = useRef(null)
+
+  const showToast = useCallback(msg => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToastMsg(msg)
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2000)
+  }, [])
 
   useEffect(() => {
     if (!tripId) return
@@ -422,6 +430,7 @@ export default function TripPage() {
               onToggleItem={toggleItem}
               onSaveToTemplate={saveToTemplate}
               onRemoveItem={removeChecklistItem}
+              onRemoveItemError={() => showToast("Couldn't delete — try again")}
               onUpdateItemLabel={renameChecklistItem}
               onRenameSectionHeader={updateSection}
               onRemoveSectionCard={removeSection}
@@ -449,6 +458,7 @@ export default function TripPage() {
               onToggleItem={toggleItem}
               onSaveToTemplate={saveToTemplate}
               onRemoveItem={removeChecklistItem}
+              onRemoveItemError={() => showToast("Couldn't delete — try again")}
               onUpdateItemLabel={renameChecklistItem}
               onRenameSectionHeader={updateSection}
               onRemoveSectionCard={removeSection}
@@ -465,6 +475,29 @@ export default function TripPage() {
         onClose={() => setEditSheetOpen(false)}
         onSaved={updated => setLocalTrip(prev => ({ ...(prev ?? trip), ...updated }))}
       />
+
+      {/* Bottom toast */}
+      {toastMsg && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: '#1a1a1a',
+            color: '#fff',
+            fontSize: 13,
+            padding: '8px 16px',
+            borderRadius: 8,
+            zIndex: 9999,
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+          }}
+        >
+          {toastMsg}
+        </div>
+      )}
     </div>
   )
 }
