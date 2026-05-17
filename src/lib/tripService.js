@@ -565,3 +565,47 @@ export async function createTripFromWizard(opts) {
 
   return { tripId }
 }
+
+function normSortOrder(row) {
+  return Number(row?.sortOrder ?? row?.sort_order ?? 0)
+}
+
+/** Swap adjacent checklist_sections within the provided ordered list (same track). */
+export async function reorderChecklistSection(supabase, sectionId, direction, allSections) {
+  const sorted = [...allSections].sort((a, b) => normSortOrder(a) - normSortOrder(b))
+  const idx = sorted.findIndex(s => s.id === sectionId)
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+  if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return
+
+  const current = sorted[idx]
+  const swap = sorted[swapIdx]
+  const tempOrder = normSortOrder(current)
+  const swapOrder = normSortOrder(swap)
+
+  const [r1, r2] = await Promise.all([
+    supabase.from('checklist_sections').update({ sort_order: swapOrder }).eq('id', current.id),
+    supabase.from('checklist_sections').update({ sort_order: tempOrder }).eq('id', swap.id),
+  ])
+  if (r1.error) throw r1.error
+  if (r2.error) throw r2.error
+}
+
+/** Swap adjacent checklist_subcategories within one section's ordered list. */
+export async function reorderChecklistCategory(supabase, categoryId, direction, allCategories) {
+  const sorted = [...allCategories].sort((a, b) => normSortOrder(a) - normSortOrder(b))
+  const idx = sorted.findIndex(c => c.id === categoryId)
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+  if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return
+
+  const current = sorted[idx]
+  const swap = sorted[swapIdx]
+  const tempOrder = normSortOrder(current)
+  const swapOrder = normSortOrder(swap)
+
+  const [r1, r2] = await Promise.all([
+    supabase.from('checklist_subcategories').update({ sort_order: swapOrder }).eq('id', current.id),
+    supabase.from('checklist_subcategories').update({ sort_order: tempOrder }).eq('id', swap.id),
+  ])
+  if (r1.error) throw r1.error
+  if (r2.error) throw r2.error
+}

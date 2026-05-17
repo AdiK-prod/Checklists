@@ -1,0 +1,88 @@
+/* Hidden on screen; print-only visibility handled below */
+#print-checklist {
+  display: none;
+}
+
+@media print {
+  /* Hide app chrome while keeping print subtree visible */
+  body * {
+    visibility: hidden;
+  }
+
+  #print-checklist,
+  #print-checklist * {
+    visibility: visible;
+  }
+
+  #print-checklist {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    font-family: 'DM Sans', sans-serif;
+    color: #000;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+
+  .print-trip-title {
+    font-size: 20pt;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
+  .print-trip-meta {
+    font-size: 11pt;
+    color: #555;
+    margin-bottom: 24px;
+  }
+
+  .print-section-name {
+    font-size: 14pt;
+    font-weight: 500;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 4px;
+    margin: 20px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .print-category-name {
+    font-size: 10pt;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #555;
+    margin: 10px 0 4px;
+  }
+
+  .print-item {
+    font-size: 11pt;
+    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .print-checkbox {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #333;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .print-checkbox.checked {
+    background: #000;
+  }
+
+  .print-person-section {
+    page-break-before: auto;
+  }
+
+  [dir='rtl'] #print-checklist {
+    direction: rtl;
+    text-align: right;
+  }
+}

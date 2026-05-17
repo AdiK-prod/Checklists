@@ -12,12 +12,14 @@ import {
   arrayMove,
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable'
-import { ArrowLeft, ChevronDown, ChevronUp, Plane, Car, Moon, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, X } from 'lucide-react'
 import ActionMenu from '../ui/ActionMenu'
+import BottomSheet from '../ui/BottomSheet'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { reorderTemplateSection, reorderTemplateCategory } from '../../lib/templateService'
+import { TEMPLATE_ICON_COMPONENTS, TEMPLATE_ICON_PICKER } from '../../lib/templateIcons'
 import {
-  ensureTemplateHasMinimalTree,
   ensureTemplateMiscSectionDefaultSubcategory,
   DEFAULT_BUCKET_SUBCATEGORY_NAME,
   isDefaultBucketSubcategoryName,
@@ -26,7 +28,7 @@ import { updateTemplateItemLabel } from '../../lib/tripService'
 import { asArray } from '../../lib/transforms'
 import SectionCard from '../ui/SectionCard'
 
-const ICON_MAP = { Plane, Car, Moon }
+const ICON_MAP = { ...TEMPLATE_ICON_COMPONENTS }
 
 const TEMPLATE_DETAIL_SELECT = `
   id, name, icon, archived,
@@ -118,6 +120,10 @@ export default function TemplatesScreen() {
   const [tplSharedSectionName, setTplSharedSectionName] = useState('')
   const [tplPersonMemberId, setTplPersonMemberId] = useState('')
   const [archivedOpen, setArchivedOpen] = useState(false)
+  const [newTemplateOpen, setNewTemplateOpen] = useState(false)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [newTemplateIcon, setNewTemplateIcon] = useState('Plane')
+  const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [duplicatingSectionId, setDuplicatingSectionId] = useState(null)
   const [duplicateSectionDraft, setDuplicateSectionDraft] = useState('')
   const [toastMsg, setToastMsg] = useState(null)
@@ -128,6 +134,13 @@ export default function TemplatesScreen() {
     setToastMsg(msg)
     toastTimerRef.current = setTimeout(() => setToastMsg(null), 2000)
   }, [])
+
+  useEffect(() => {
+    if (newTemplateOpen) {
+      setNewTemplateName('')
+      setNewTemplateIcon('Plane')
+    }
+  }, [newTemplateOpen])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -221,27 +234,6 @@ export default function TemplatesScreen() {
     setAddSectionOpen(false)
     setAddSectionTab('shared')
   }, [openId])
-
-  useEffect(() => {
-    if (!openId || !household?.id) return
-    const tpl = rows.find(r => r.id === openId)
-    if (!tpl) return
-    const hasNoSections = !(tpl.template_sections || []).length
-    if (!hasNoSections) return
-
-    let cancelled = false
-    ;(async () => {
-      try {
-        const created = await ensureTemplateHasMinimalTree(supabase, openId)
-        if (!cancelled && created) await mergeTemplateRow(openId)
-      } catch (e) {
-        if (!cancelled) alert(e?.message || 'Could not prepare template.')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [openId, rows, household?.id, mergeTemplateRow])
 
   async function saveTemplateName(id) {
     const name = editNameValue.trim()
@@ -529,7 +521,7 @@ export default function TemplatesScreen() {
     const newName = `${src.name} copy`
     // Create template
     const { data: newTpl, error: te } = await supabase
-      .from('templates').insert({ household_id: household.id, name: newName, icon: src.icon ?? null })
+      .from('templates').insert({ household_id: household.id, name: newName, icon: src.icon || 'Plane' })
       .select('id').single()
     if (te) { alert(te.message); return }
     // Copy sections → subcategories → items
@@ -576,6 +568,133 @@ export default function TemplatesScreen() {
     setDuplicatingSectionId(null)
     setDuplicateSectionDraft('')
     await mergeTemplateRow(openId)
+  }
+
+  function snapshotRows(rowsSnapshot) {
+    return rowsSnapshot.map(r => ({
+      ...r,
+      template_sections: (r.template_sections || []).map(s => ({
+        ...s,
+        template_subcategories: (s.template_subcategories || []).map(sc => ({ ...sc })),
+      })),
+    }))
+  }
+
+  async function persistReorderTemplateSection(templateId, sectionId, direction, sectionType) {
+    const tpl = rows.find(r => r.id === templateId)
+    const secs = [...(tpl?.template_sections || [])]
+      .filter(s => s.section_type === sectionType)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    const snapshot = snapshotRows(rows)
+    const idx = secs.findIndex(s => s.id === sectionId)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (idx < 0 || swapIdx < 0 || swapIdx >= secs.length) return
+
+    const a = secs[idx]
+    const b = secs[swapIdx]
+    const oa = a.sort_order ?? 0
+    const ob = b.sort_order ?? 0
+
+    setRows(prev =>
+      prev.map(r => {
+        if (r.id !== templateId) return r
+        const nextSecs = (r.template_sections || []).map(s => {
+          if (s.id === a.id) return { ...s, sort_order: ob }
+          if (s.id === b.id) return { ...s, sort_order: oa }
+          return s
+        })
+        return {
+          ...r,
+          template_sections: nextSecs.sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0)),
+        }
+      }),
+    )
+
+    try {
+      await reorderTemplateSection(supabase, sectionId, direction, secs)
+      await mergeTemplateRow(templateId)
+    } catch (e) {
+      console.error(e)
+      setRows(snapshot)
+      showToast('Could not reorder')
+    }
+  }
+
+  async function persistReorderTemplateCategory(templateId, sectionId, categoryId, direction) {
+    const tpl = rows.find(r => r.id === templateId)
+    const sec = tpl?.template_sections?.find(s => s.id === sectionId)
+    const cats = [...asArray(sec?.template_subcategories)].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    )
+    const snapshot = snapshotRows(rows)
+    const idx = cats.findIndex(c => c.id === categoryId)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (idx < 0 || swapIdx < 0 || swapIdx >= cats.length) return
+
+    const a = cats[idx]
+    const b = cats[swapIdx]
+    const oa = a.sort_order ?? 0
+    const ob = b.sort_order ?? 0
+
+    setRows(prev =>
+      prev.map(r => {
+        if (r.id !== templateId) return r
+        return {
+          ...r,
+          template_sections: (r.template_sections || []).map(s => {
+            if (s.id !== sectionId) return s
+            const nextSubs = (s.template_subcategories || []).map(sub => {
+              if (sub.id === a.id) return { ...sub, sort_order: ob }
+              if (sub.id === b.id) return { ...sub, sort_order: oa }
+              return sub
+            })
+            return {
+              ...s,
+              template_subcategories: nextSubs.sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0)),
+            }
+          }),
+        }
+      }),
+    )
+
+    try {
+      await reorderTemplateCategory(supabase, categoryId, direction, cats)
+      await mergeTemplateRow(templateId)
+    } catch (e) {
+      console.error(e)
+      setRows(snapshot)
+      showToast('Could not reorder')
+    }
+  }
+
+  async function createBlankTemplate() {
+    const name = newTemplateName.trim()
+    if (!name || !household?.id) return
+    setCreatingTemplate(true)
+    try {
+      const { data, error } = await supabase
+        .from('templates')
+        .insert({
+          household_id: household.id,
+          name,
+          icon: newTemplateIcon,
+          is_default: false,
+          archived: false,
+        })
+        .select('id')
+        .single()
+      if (error) throw error
+      setNewTemplateOpen(false)
+      setNewTemplateName('')
+      setNewTemplateIcon('Plane')
+      await mergeTemplateRow(data.id)
+      setOpenId(data.id)
+      await load()
+    } catch (e) {
+      alert(e?.message || 'Could not create template')
+    } finally {
+      setCreatingTemplate(false)
+    }
   }
 
   const reorderTemplateItems = useCallback(async (_subcategoryId, orderedIds, templateId) => {
@@ -718,16 +837,31 @@ export default function TemplatesScreen() {
 
   return (
     <div className="bg-page h-[100dvh] max-h-[100dvh] flex flex-col overflow-hidden">
-      <div className="flex-none flex items-center gap-2 px-4 pt-4 pb-3 border-b border-[rgba(0,0,0,0.06)]">
+      <div className="flex-none flex items-center justify-between gap-2 px-4 pt-4 pb-3 border-b border-[rgba(0,0,0,0.06)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => navigate('/settings', { state: { direction: 'back' } })}
+            className="flex items-center gap-1 text-13 flex-shrink-0"
+            style={{ color: '#2d6fb5' }}
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <h1 className="text-18 font-medium text-content-primary truncate">Pack templates</h1>
+        </div>
         <button
           type="button"
-          onClick={() => navigate('/settings', { state: { direction: 'back' } })}
-          className="flex items-center gap-1 text-13"
-          style={{ color: '#2d6fb5' }}
+          onClick={() => setNewTemplateOpen(true)}
+          className="flex-shrink-0 text-13 font-medium bg-transparent cursor-pointer"
+          style={{
+            border: '0.5px solid #3d6494',
+            color: '#3d6494',
+            borderRadius: 8,
+            padding: '7px 14px',
+          }}
         >
-          <ArrowLeft size={16} />
+          + New template
         </button>
-        <h1 className="text-18 font-medium text-content-primary">Pack templates</h1>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 pb-8">
@@ -835,10 +969,12 @@ export default function TemplatesScreen() {
                         const sortedSections = [...(tpl.template_sections || [])].sort(
                           (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
                         )
-                        return (
-                          <>
-                            {sortedSections.map(sec => (
-                              <Fragment key={sec.id}>
+                        const sharedSecs = sortedSections.filter(s => s.section_type === 'shared')
+                        const personSecs = sortedSections.filter(s => s.section_type === 'person')
+
+                        function renderTemplateSectionRow(sec, idxInTrack, trackSecs) {
+                          return (
+                            <Fragment key={sec.id}>
                               <SectionCard
                                 mode="template"
                                 workingTemplateId={tpl.id}
@@ -851,10 +987,39 @@ export default function TemplatesScreen() {
                                 quickAddTemplateItem={appendTemplateItem}
                                 onRemoveItem={removeTemplateItem}
                                 onRemoveItemError={() => showToast("Couldn't delete — try again")}
-                                onDuplicateSection={id => { setDuplicatingSectionId(id); setDuplicateSectionDraft('') }}
+                                onDuplicateSection={id => {
+                                  setDuplicatingSectionId(id)
+                                  setDuplicateSectionDraft('')
+                                }}
                                 onUpdateItemLabel={renameTemplateItem}
                                 onRenameSectionHeader={updateTemplateSectionName}
                                 onRemoveSectionCard={removeTemplateSectionById}
+                                sectionMoveUpDisabled={idxInTrack === 0}
+                                sectionMoveDownDisabled={idxInTrack === trackSecs.length - 1}
+                                onSectionMoveUp={() =>
+                                  persistReorderTemplateSection(
+                                    tpl.id,
+                                    sec.id,
+                                    'up',
+                                    sec.section_type,
+                                  )
+                                }
+                                onSectionMoveDown={() =>
+                                  persistReorderTemplateSection(
+                                    tpl.id,
+                                    sec.id,
+                                    'down',
+                                    sec.section_type,
+                                  )
+                                }
+                                onReorderCategory={(categoryId, direction) =>
+                                  persistReorderTemplateCategory(
+                                    tpl.id,
+                                    sec.id,
+                                    categoryId,
+                                    direction,
+                                  )
+                                }
                               />
                               {duplicatingSectionId === sec.id && (
                                 <div className="flex items-center gap-2 px-1 py-2">
@@ -866,8 +1031,12 @@ export default function TemplatesScreen() {
                                     placeholder="New section name…"
                                     className="flex-1 min-w-0 rounded-input border border-[#e0ddd8] bg-white px-2 py-1.5 text-13 focus:outline-none focus:border-navy"
                                     onKeyDown={e => {
-                                      if (e.key === 'Enter' && duplicateSectionDraft.trim()) duplicateSection(sec.id, duplicateSectionDraft)
-                                      if (e.key === 'Escape') { setDuplicatingSectionId(null); setDuplicateSectionDraft('') }
+                                      if (e.key === 'Enter' && duplicateSectionDraft.trim())
+                                        duplicateSection(sec.id, duplicateSectionDraft)
+                                      if (e.key === 'Escape') {
+                                        setDuplicatingSectionId(null)
+                                        setDuplicateSectionDraft('')
+                                      }
                                     }}
                                   />
                                   <button
@@ -880,15 +1049,24 @@ export default function TemplatesScreen() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => { setDuplicatingSectionId(null); setDuplicateSectionDraft('') }}
+                                    onClick={() => {
+                                      setDuplicatingSectionId(null)
+                                      setDuplicateSectionDraft('')
+                                    }}
                                     className="flex-shrink-0 p-1 border-0 bg-transparent text-content-hint cursor-pointer inline-flex items-center justify-center"
                                   >
                                     <X size={16} strokeWidth={2} />
                                   </button>
                                 </div>
                               )}
-                              </Fragment>
-                            ))}
+                            </Fragment>
+                          )
+                        }
+
+                        return (
+                          <>
+                            {sharedSecs.map((sec, i) => renderTemplateSectionRow(sec, i, sharedSecs))}
+                            {personSecs.map((sec, i) => renderTemplateSectionRow(sec, i, personSecs))}
 
                             <div
                               className="bg-white rounded-card overflow-hidden"
@@ -1085,6 +1263,83 @@ export default function TemplatesScreen() {
           </div>
         )}
       </div>
+
+      <BottomSheet
+        open={newTemplateOpen}
+        onClose={() => setNewTemplateOpen(false)}
+        title="New template"
+      >
+        <div className="flex flex-col gap-5 pb-2">
+          <div>
+            <label
+              htmlFor="new-template-name"
+              className="block text-13 font-medium text-content-primary mb-2"
+            >
+              Name
+            </label>
+            <input
+              id="new-template-name"
+              type="text"
+              value={newTemplateName}
+              onChange={e => setNewTemplateName(e.target.value)}
+              placeholder="Template name..."
+              className="w-full text-13 rounded-input px-3 py-2.5 border border-[#e0ddd8] bg-white focus:outline-none focus:border-navy"
+              autoFocus
+            />
+          </div>
+          <div>
+            <div className="text-13 font-medium text-content-primary mb-2">Icon</div>
+            <div className="grid grid-cols-4 gap-3">
+              {TEMPLATE_ICON_PICKER.map(({ name, label }) => {
+                const IconComp = ICON_MAP[name]
+                const selected = newTemplateIcon === name
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => setNewTemplateIcon(name)}
+                    className="flex flex-col items-center gap-1 bg-transparent border-0 cursor-pointer p-0 min-w-0"
+                  >
+                    <div
+                      className="flex items-center justify-center"
+                      style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: 10,
+                        backgroundColor: selected ? '#3d6494' : '#f1efe8',
+                        border: selected ? '2px solid #3d6494' : '2px solid transparent',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      {IconComp ? (
+                        <IconComp
+                          size={22}
+                          style={{ color: selected ? '#fff' : '#6b6b6b' }}
+                          strokeWidth={2}
+                        />
+                      ) : null}
+                    </div>
+                    <span
+                      className="w-full text-center truncate"
+                      style={{ fontSize: 10, color: '#6b6b6b' }}
+                    >
+                      {label}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={creatingTemplate || !newTemplateName.trim()}
+            onClick={createBlankTemplate}
+            className="w-full py-3 rounded-input text-14 font-medium text-white bg-navy disabled:opacity-40 border-0 cursor-pointer"
+          >
+            Create template
+          </button>
+        </div>
+      </BottomSheet>
 
       {/* Bottom toast */}
       {toastMsg && (

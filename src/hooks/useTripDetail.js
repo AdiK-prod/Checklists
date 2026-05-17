@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
-import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip, updateChecklistItemLabel } from '../lib/tripService'
+import { rebuildTripChecklistFromTemplate, ensureMinimalChecklistForTrip, updateChecklistItemLabel, reorderChecklistSection, reorderChecklistCategory } from '../lib/tripService'
 import {
   normalizeTripDetail,
   buildSectionsTree,
@@ -103,6 +103,11 @@ export function useTripDetail(tripId) {
   const rawSubByIdRef = useRef(new Map())
   const rawSectionByIdRef = useRef(new Map())
   const templateIdRef = useRef(null)
+  const tripRef = useRef(null)
+
+  useEffect(() => {
+    tripRef.current = trip
+  }, [trip])
 
   useEffect(() => {
     if (!tripId) {
@@ -1020,6 +1025,103 @@ export function useTripDetail(tripId) {
     if (upErr) console.error(upErr)
   }, [])
 
+  const reorderTripSection = useCallback(async (sectionId, direction, track) => {
+    const prev = tripRef.current
+    if (!prev) return
+    const trackList = prev.sections
+      .filter(s => s.sectionType === track)
+      .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+    const idx = trackList.findIndex(s => s.id === sectionId)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (idx < 0 || swapIdx < 0 || swapIdx >= trackList.length) return
+    const a = trackList[idx]
+    const b = trackList[swapIdx]
+    const orderA = Number(a.sortOrder) || 0
+    const orderB = Number(b.sortOrder) || 0
+
+    const sections = prev.sections
+      .map(s => {
+        if (s.id === a.id) return { ...s, sortOrder: orderB }
+        if (s.id === b.id) return { ...s, sortOrder: orderA }
+        return s
+      })
+      .sort((x, y) => (Number(x.sortOrder) || 0) - (Number(y.sortOrder) || 0))
+
+    const nextTrip = {
+      ...prev,
+      sections,
+      aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+    }
+
+    setTrip(nextTrip)
+
+    try {
+      await reorderChecklistSection(supabase, sectionId, direction, trackList)
+      const ra = rawSectionByIdRef.current.get(a.id)
+      const rb = rawSectionByIdRef.current.get(b.id)
+      if (ra && rb) {
+        const t = ra.sort_order
+        ra.sort_order = rb.sort_order
+        rb.sort_order = t
+      }
+    } catch (e) {
+      console.error(e)
+      setTrip(prev)
+      throw e
+    }
+  }, [])
+
+  const reorderTripCategory = useCallback(async (sectionId, categoryId, direction) => {
+    const prev = tripRef.current
+    if (!prev) return
+    const sec = prev.sections.find(s => s.id === sectionId)
+    if (!sec) return
+    const cats = [...(sec.subcategories || [])].sort(
+      (a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0),
+    )
+    const idx = cats.findIndex(c => c.id === categoryId)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (idx < 0 || swapIdx < 0 || swapIdx >= cats.length) return
+    const a = cats[idx]
+    const b = cats[swapIdx]
+    const orderA = Number(a.sortOrder) || 0
+    const orderB = Number(b.sortOrder) || 0
+
+    const sections = prev.sections.map(s => {
+      if (s.id !== sectionId) return s
+      const nextSubs = (s.subcategories || [])
+        .map(sub => {
+          if (sub.id === a.id) return { ...sub, sortOrder: orderB }
+          if (sub.id === b.id) return { ...sub, sortOrder: orderA }
+          return sub
+        })
+        .sort((x, y) => (Number(x.sortOrder) || 0) - (Number(y.sortOrder) || 0))
+      return { ...s, subcategories: nextSubs }
+    })
+
+    const nextTrip = {
+      ...prev,
+      sections,
+      aiSuggestions: buildAiSuggestionsFromSections(sections, prev.travellers),
+    }
+    setTrip(nextTrip)
+
+    try {
+      await reorderChecklistCategory(supabase, categoryId, direction, cats)
+      const ra = rawSubByIdRef.current.get(a.id)
+      const rb = rawSubByIdRef.current.get(b.id)
+      if (ra && rb) {
+        const t = ra.sort_order
+        ra.sort_order = rb.sort_order
+        rb.sort_order = t
+      }
+    } catch (e) {
+      console.error(e)
+      setTrip(prev)
+      throw e
+    }
+  }, [])
+
   return {
     trip,
     loading,
@@ -1041,5 +1143,7 @@ export function useTripDetail(tripId) {
     addChecklistCategory,
     updateSection,
     removeSection,
+    reorderTripSection,
+    reorderTripCategory,
   }
 }

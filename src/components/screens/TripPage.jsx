@@ -38,7 +38,7 @@ import { useDirection } from '../../contexts/DirectionContext'
 import { flipIcon } from '../../lib/dirUtils'
 import { getCachedWeather } from '../../lib/weatherService'
 import { deleteTrip } from '../../lib/tripService'
-import { exportChecklistPDF } from '../../lib/exportChecklistPDF'
+import { exportTripPDF } from '../../lib/exportTripPrint'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
@@ -46,6 +46,7 @@ import { getSectionIconMeta } from '../../lib/sectionIcons'
 import SectionCard from '../ui/SectionCard'
 import ActionMenu from '../ui/ActionMenu'
 import EditTripSheet from '../ui/EditTripSheet'
+import PrintChecklist from '../ui/PrintChecklist'
 import { useTripDetail } from '../../hooks/useTripDetail'
 
 function iconFromTripType(tripType = '') {
@@ -129,6 +130,8 @@ export default function TripPage() {
     renameChecklistSubcategory,
     removeSubcategory,
     renameChecklistItem,
+    reorderTripSection,
+    reorderTripCategory,
   } = useTripDetail(tripId)
   const { dir } = useDirection()
   const BackArrow = flipIcon(ArrowLeft, dir)
@@ -146,6 +149,22 @@ export default function TripPage() {
     setToastMsg(msg)
     toastTimer.current = setTimeout(() => setToastMsg(null), 2000)
   }, [])
+
+  const reorderSectionSafe = useCallback(
+    (sectionId, direction, track) =>
+      reorderTripSection(sectionId, direction, track).catch(() =>
+        showToast('Could not reorder'),
+      ),
+    [reorderTripSection, showToast],
+  )
+
+  const reorderCategorySafe = useCallback(
+    (sectionId, categoryId, direction) =>
+      reorderTripCategory(sectionId, categoryId, direction).catch(() =>
+        showToast('Could not reorder'),
+      ),
+    [reorderTripCategory, showToast],
+  )
 
   useEffect(() => {
     if (!tripId) return
@@ -310,7 +329,7 @@ export default function TripPage() {
               buttonStyle={{ color: 'rgba(255,255,255,0.7)', flexShrink: 0 }}
               items={[
                 { label: 'Edit', onClick: () => setEditSheetOpen(true) },
-                { label: 'Export as PDF', onClick: () => exportChecklistPDF(displayTrip, trip.sections || []) },
+                { label: 'Export as PDF', onClick: () => exportTripPDF() },
                 { label: 'Remove', onClick: handleDeleteTrip, danger: true },
               ]}
             />
@@ -412,7 +431,7 @@ export default function TripPage() {
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <TrackLabel>SHARED</TrackLabel>
-          {sharedSections.map(sec => (
+          {sharedSections.map((sec, i) => (
             <SectionCard
               key={sec.id}
               mode="trip"
@@ -420,6 +439,13 @@ export default function TripPage() {
               variant="shared"
               householdMembers={membersList}
               linkedTemplateId={trip.templateId}
+              sectionMoveUpDisabled={i === 0}
+              sectionMoveDownDisabled={i === sharedSections.length - 1}
+              onSectionMoveUp={() => reorderSectionSafe(sec.id, 'up', 'shared')}
+              onSectionMoveDown={() => reorderSectionSafe(sec.id, 'down', 'shared')}
+              onReorderCategory={(categoryId, direction) =>
+                reorderCategorySafe(sec.id, categoryId, direction)
+              }
               onAddCategory={addChecklistCategory}
               onRenameCategory={renameChecklistSubcategory}
               onRemoveCategory={removeSubcategory}
@@ -440,7 +466,7 @@ export default function TripPage() {
           ))}
 
           <TrackLabel>PEOPLE</TrackLabel>
-          {personSections.map(sec => (
+          {personSections.map((sec, i) => (
             <SectionCard
               key={sec.id}
               mode="trip"
@@ -448,6 +474,13 @@ export default function TripPage() {
               variant="person"
               householdMembers={membersList}
               linkedTemplateId={trip.templateId}
+              sectionMoveUpDisabled={i === 0}
+              sectionMoveDownDisabled={i === personSections.length - 1}
+              onSectionMoveUp={() => reorderSectionSafe(sec.id, 'up', 'person')}
+              onSectionMoveDown={() => reorderSectionSafe(sec.id, 'down', 'person')}
+              onReorderCategory={(categoryId, direction) =>
+                reorderCategorySafe(sec.id, categoryId, direction)
+              }
               onAddCategory={addChecklistCategory}
               onRenameCategory={renameChecklistSubcategory}
               onRemoveCategory={removeSubcategory}
@@ -477,6 +510,8 @@ export default function TripPage() {
         onClose={() => setEditSheetOpen(false)}
         onSaved={updated => setLocalTrip(prev => ({ ...(prev ?? trip), ...updated }))}
       />
+
+      <PrintChecklist trip={displayTrip} sections={trip.sections || []} dir={dir} />
 
       {/* Bottom toast */}
       {toastMsg && (

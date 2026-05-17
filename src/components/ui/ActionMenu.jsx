@@ -8,7 +8,7 @@ import { useDirection } from '../../contexts/DirectionContext'
  * overflow-hidden ancestor (e.g. rounded card wrappers).
  * Aligns to the correct edge in both LTR and RTL.
  *
- * @param {{ label: string, onClick: () => void, danger?: boolean }[]} items
+ * @param {{ label: string, onClick?: () => void, danger?: boolean, disabled?: boolean }[]} items
  * @param {number}   [buttonSize=28]     – px, used for width & height of default trigger
  * @param {number}   [iconSize=16]       – px, MoreVertical icon size
  * @param {object}   [buttonStyle={}]    – extra inline styles on trigger button
@@ -91,33 +91,51 @@ export default function ActionMenu({ items, buttonSize = 28, iconSize = 16, butt
             overflow: 'hidden',
           }}
         >
-          {items.map((item, i) => (
-            <button
-              key={item.label}
-              type="button"
-              role="menuitem"
-              onClick={e => {
-                e.stopPropagation()
-                setOpen(false)
-                item.onClick()
-              }}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'start',
-                padding: '11px 16px',
-                fontSize: 14,
-                lineHeight: 1.4,
-                color: item.danger ? '#c03434' : '#1a1a1a',
-                background: 'transparent',
-                border: 'none',
-                borderTop: i > 0 ? '0.5px solid rgba(0,0,0,0.06)' : 'none',
-                cursor: 'pointer',
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+          {items.map((item, i) =>
+            item.disabled ? (
+              <div
+                key={`${item.label}-${i}`}
+                role="presentation"
+                style={{
+                  padding: '11px 16px',
+                  fontSize: 14,
+                  lineHeight: 1.4,
+                  color: '#b0aaa3',
+                  borderTop: i > 0 ? '0.5px solid rgba(0,0,0,0.06)' : 'none',
+                  cursor: 'not-allowed',
+                  userSelect: 'none',
+                }}
+              >
+                {item.label}
+              </div>
+            ) : (
+              <button
+                key={`${item.label}-${i}`}
+                type="button"
+                role="menuitem"
+                onClick={e => {
+                  e.stopPropagation()
+                  setOpen(false)
+                  item.onClick()
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'start',
+                  padding: '11px 16px',
+                  fontSize: 14,
+                  lineHeight: 1.4,
+                  color: item.danger ? '#c03434' : '#1a1a1a',
+                  background: 'transparent',
+                  border: 'none',
+                  borderTop: i > 0 ? '0.5px solid rgba(0,0,0,0.06)' : 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                {item.label}
+              </button>
+            ),
+          )}
         </div>
       )}
     </>

@@ -142,7 +142,7 @@ function SubcategoryTailDrop({ subId }) {
   )
 }
 
-/** Trip checklist row (checkbox, save-to-template, swipe/hover delete) */
+/** Trip checklist row (checkbox, save-to-template, delete) */
 function SortableTripItemRow(props) {
   const { item } = props
   const {
@@ -207,20 +207,9 @@ function TripItemRow({
   const [saveFlash, setSaveFlash]   = useState(null)
   const saveFlashTimer              = useRef(null)
 
-  // Mobile swipe-to-delete state
-  const [swipeRevealed, setSwipeRevealed] = useState(false)
-  const touchStartX                       = useRef(null)
-  const touchStartY                       = useRef(null)
-
-  // Desktop hover state
-  const [hovered, setHovered] = useState(false)
-
   useEffect(() => () => {
     if (saveFlashTimer.current) clearTimeout(saveFlashTimer.current)
   }, [])
-
-  // Reset swipe reveal when item changes (e.g. after save)
-  useEffect(() => { setSwipeRevealed(false) }, [item.id])
 
   const handleSave = e => {
     e.stopPropagation()
@@ -236,32 +225,10 @@ function TripItemRow({
 
   const handleDeleteClick = async e => {
     e.stopPropagation()
-    setSwipeRevealed(false)
     try {
       await onDelete()
     } catch {
       onDeleteError?.()
-    }
-  }
-
-  const handleTouchStart = e => {
-    touchStartX.current = e.touches[0].clientX
-    touchStartY.current = e.touches[0].clientY
-  }
-
-  const handleTouchEnd = e => {
-    const x0 = touchStartX.current
-    const y0 = touchStartY.current
-    touchStartX.current = null
-    touchStartY.current = null
-    if (x0 == null) return
-    const dx = x0 - e.changedTouches[0].clientX
-    const dy = Math.abs(e.changedTouches[0].clientY - y0)
-    // Only treat as horizontal swipe if more horizontal than vertical
-    if (dx > 40 && dy < 20) {
-      setSwipeRevealed(true)
-    } else if (dx < -20) {
-      setSwipeRevealed(false)
     }
   }
 
@@ -299,21 +266,10 @@ function TripItemRow({
 
   return (
     <div
-      className={['relative overflow-hidden', isNew ? 'item-appear' : ''].join(' ')}
+      className={['relative', isNew ? 'item-appear' : ''].join(' ')}
       style={showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
     >
-      {/* Main row content — slides left on swipe to reveal delete zone */}
-      <div
-        className="flex items-center gap-2 py-[9px] pr-1"
-        style={{
-          transform: swipeRevealed ? 'translateX(-56px)' : 'translateX(0)',
-          transition: 'transform 200ms ease',
-        }}
-      >
+      <div className="flex items-center gap-2 py-[9px] pr-1">
         <button
           type="button"
           ref={activatorRef}
@@ -374,10 +330,8 @@ function TripItemRow({
           </span>
         )}
 
-        {/* Right action (save / flash / error) */}
         {rightAction}
 
-        {/* Desktop hover × */}
         <button
           type="button"
           onClick={handleDeleteClick}
@@ -386,42 +340,23 @@ function TripItemRow({
           style={{
             width: 24,
             height: 24,
-            opacity: hovered ? 1 : 0,
-            pointerEvents: hovered ? 'auto' : 'none',
-            transition: 'opacity 120ms',
             color: '#9a9a9a',
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#e24b4a' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#9a9a9a' }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color = '#e24b4a'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = '#9a9a9a'
+          }}
         >
           <X size={14} strokeWidth={2} />
         </button>
       </div>
-
-      {/* Mobile swipe-revealed red delete zone */}
-      <button
-        type="button"
-        onClick={handleDeleteClick}
-        aria-label="Remove item"
-        className="absolute top-0 right-0 bottom-0 flex items-center justify-center"
-        style={{
-          width: 56,
-          backgroundColor: '#e24b4a',
-          borderRadius: '0 8px 8px 0',
-          border: 'none',
-          cursor: 'pointer',
-          opacity: swipeRevealed ? 1 : 0,
-          pointerEvents: swipeRevealed ? 'auto' : 'none',
-          transition: 'opacity 200ms ease',
-        }}
-      >
-        <X size={16} color="white" strokeWidth={2.5} />
-      </button>
     </div>
   )
 }
 
-/** Template editing row — swipe/hover delete with inline confirmation */
+/** Template editing row — inline confirmation before remove */
 function SortableTemplateItemRow({
   item,
   showBorder,
@@ -452,18 +387,13 @@ function SortableTemplateItemRow({
     zIndex: isDragging ? 2 : undefined,
   }
 
-  const [confirmOpen, setConfirmOpen]     = useState(false)
-  const [swipeRevealed, setSwipeRevealed] = useState(false)
-  const [hovered, setHovered]             = useState(false)
-  const confirmTimerRef                   = useRef(null)
-  const touchStartX                       = useRef(null)
-  const touchStartY                       = useRef(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const confirmTimerRef = useRef(null)
 
   useEffect(() => () => { if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current) }, [])
-  useEffect(() => { setSwipeRevealed(false); setConfirmOpen(false) }, [item.id])
+  useEffect(() => { setConfirmOpen(false) }, [item.id])
 
   const openConfirm = () => {
-    setSwipeRevealed(false)
     setConfirmOpen(true)
     if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
     confirmTimerRef.current = setTimeout(() => setConfirmOpen(false), 4000)
@@ -477,21 +407,6 @@ function SortableTemplateItemRow({
   const handleConfirmRemove = async () => {
     cancelConfirm()
     try { await onRemove() } catch { onRemoveError?.() }
-  }
-
-  const handleTouchStart = e => {
-    touchStartX.current = e.touches[0].clientX
-    touchStartY.current = e.touches[0].clientY
-  }
-
-  const handleTouchEnd = e => {
-    const x0 = touchStartX.current, y0 = touchStartY.current
-    touchStartX.current = null; touchStartY.current = null
-    if (x0 == null) return
-    const dx = x0 - e.changedTouches[0].clientX
-    const dy = Math.abs(e.changedTouches[0].clientY - y0)
-    if (dx > 40 && dy < 20) setSwipeRevealed(true)
-    else if (dx < -20) setSwipeRevealed(false)
   }
 
   const borderStyle = showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}
@@ -536,22 +451,8 @@ function SortableTemplateItemRow({
   }
 
   return (
-    <div
-      ref={setNodeRef}
-      className="relative overflow-hidden"
-      style={{ ...dndStyle, ...borderStyle }}
-    >
-      <div
-        className="flex items-center gap-2 py-[9px] pr-1"
-        style={{
-          transform: swipeRevealed ? 'translateX(-56px)' : 'translateX(0)',
-          transition: 'transform 200ms ease',
-        }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
+    <div ref={setNodeRef} className="relative" style={{ ...dndStyle, ...borderStyle }}>
+      <div className="flex items-center gap-2 py-[9px] pr-1">
         <button
           type="button"
           ref={setActivatorNodeRef}
@@ -595,45 +496,26 @@ function SortableTemplateItemRow({
             {item.label}
           </span>
         )}
-        {/* Desktop hover × */}
         <button
           type="button"
           onClick={openConfirm}
           aria-label="Remove item"
           className="flex-shrink-0 flex items-center justify-center bg-transparent border-0 cursor-pointer rounded"
           style={{
-            width: 24, height: 24,
-            opacity: hovered ? 1 : 0,
-            pointerEvents: hovered ? 'auto' : 'none',
-            transition: 'opacity 120ms',
+            width: 24,
+            height: 24,
             color: '#9a9a9a',
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#e24b4a' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#9a9a9a' }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color = '#e24b4a'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = '#9a9a9a'
+          }}
         >
           <X size={14} strokeWidth={2} />
         </button>
       </div>
-
-      {/* Mobile swipe-revealed red delete zone */}
-      <button
-        type="button"
-        onClick={openConfirm}
-        aria-label="Remove item"
-        className="absolute top-0 right-0 bottom-0 flex items-center justify-center"
-        style={{
-          width: 56,
-          backgroundColor: '#e24b4a',
-          borderRadius: '0 8px 8px 0',
-          border: 'none',
-          cursor: 'pointer',
-          opacity: swipeRevealed ? 1 : 0,
-          pointerEvents: swipeRevealed ? 'auto' : 'none',
-          transition: 'opacity 200ms ease',
-        }}
-      >
-        <X size={16} color="white" strokeWidth={2.5} />
-      </button>
     </div>
   )
 }
@@ -658,6 +540,11 @@ export default function SectionCard({
   onRenameSectionHeader,
   onRemoveSectionCard,
   onUpdateItemLabel,
+  sectionMoveUpDisabled = false,
+  sectionMoveDownDisabled = false,
+  onSectionMoveUp,
+  onSectionMoveDown,
+  onReorderCategory,
 }) {
   const [expanded, setExpanded] = useState(true)
   const [newItemIds, setNewItemIds] = useState(new Set())
@@ -1080,6 +967,9 @@ export default function SectionCard({
 
   const headerDividerStyle = expanded ? { borderBottom: '0.5px solid rgba(0,0,0,0.08)' } : {}
 
+  const showSectionReorder =
+    typeof onSectionMoveUp === 'function' && typeof onSectionMoveDown === 'function'
+
   const headerSecondary =
     isTrip ? `${secChecked}/${secTotal}` : `${secTotal} items`
 
@@ -1124,6 +1014,21 @@ export default function SectionCard({
               iconSize={14}
               buttonStyle={{ color: '#9a9a9a' }}
               items={[
+                ...(typeof onReorderCategory === 'function'
+                  ? [
+                      {
+                        label: 'Move up',
+                        disabled: sortedSubs.findIndex(s => s.id === sub.id) <= 0,
+                        onClick: () => onReorderCategory(sub.id, 'up'),
+                      },
+                      {
+                        label: 'Move down',
+                        disabled:
+                          sortedSubs.findIndex(s => s.id === sub.id) >= sortedSubs.length - 1,
+                        onClick: () => onReorderCategory(sub.id, 'down'),
+                      },
+                    ]
+                  : []),
                 { label: 'Rename', onClick: () => startRenameCat(sub) },
                 { label: 'Remove', onClick: () => promptRemoveCat(sub), danger: true },
               ]}
@@ -1213,11 +1118,28 @@ export default function SectionCard({
               iconSize={16}
               buttonStyle={{ color: '#6b6b6b' }}
               items={[
+                ...(showSectionReorder
+                  ? [
+                      {
+                        label: 'Move up',
+                        disabled: sectionMoveUpDisabled,
+                        onClick: () => onSectionMoveUp(),
+                      },
+                      {
+                        label: 'Move down',
+                        disabled: sectionMoveDownDisabled,
+                        onClick: () => onSectionMoveDown(),
+                      },
+                    ]
+                  : []),
                 {
                   label: 'Add category',
                   onClick: () => {
                     if (slot === 'cat-add') closeSlotOnly()
-                    else { setExpanded(true); openAddCategorySlot() }
+                    else {
+                      setExpanded(true)
+                      openAddCategorySlot()
+                    }
                   },
                 },
                 { label: 'Rename', onClick: () => setSectionNameEditOpen(true) },
