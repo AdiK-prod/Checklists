@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
@@ -12,7 +12,8 @@ import {
   arrayMove,
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable'
-import { ArrowLeft, ChevronDown, ChevronUp, Plane, Car, Moon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Plane, Car, Moon, X } from 'lucide-react'
+import ActionMenu from '../ui/ActionMenu'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import {
@@ -28,7 +29,7 @@ import SectionCard from '../ui/SectionCard'
 const ICON_MAP = { Plane, Car, Moon }
 
 const TEMPLATE_DETAIL_SELECT = `
-  id, name, icon,
+  id, name, icon, archived,
   template_sections(
     id, section_type, name, member_id, sort_order,
     template_subcategories(
@@ -52,7 +53,7 @@ function normalizeTemplateRow(t) {
           ),
         })),
     }))
-  return { ...t, template_sections: secs }
+  return { ...t, archived: t.archived ?? false, template_sections: secs }
 }
 
 function countTemplateItems(tpl) {
@@ -116,6 +117,17 @@ export default function TemplatesScreen() {
   const [addSectionTab, setAddSectionTab] = useState('shared')
   const [tplSharedSectionName, setTplSharedSectionName] = useState('')
   const [tplPersonMemberId, setTplPersonMemberId] = useState('')
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [duplicatingSectionId, setDuplicatingSectionId] = useState(null)
+  const [duplicateSectionDraft, setDuplicateSectionDraft] = useState('')
+  const [toastMsg, setToastMsg] = useState(null)
+  const toastTimerRef = useRef(null)
+
+  const showToast = useCallback(msg => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToastMsg(msg)
+    toastTimerRef.current = setTimeout(() => setToastMsg(null), 2000)
+  }, [])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -132,7 +144,7 @@ export default function TemplatesScreen() {
       .from('templates')
       .select(
         `
-        id, name, icon,
+        id, name, icon, archived,
         template_sections(
           id, section_type, name, member_id, sort_order,
           template_subcategories(
@@ -465,16 +477,104 @@ export default function TemplatesScreen() {
   }
 
   async function removeTemplateItem(itemId) {
+    // Optimistic: remove from local state immediately, restore on error
+    const snapshot = rows.slice()
+    setRows(prev => prev.map(tpl => ({
+      ...tpl,
+      template_sections: (tpl.template_sections || []).map(sec => ({
+        ...sec,
+        template_subcategories: (sec.template_subcategories || []).map(sub => ({
+          ...sub,
+          template_items: (sub.template_items || []).filter(it => it.id !== itemId),
+        })),
+      })),
+    })))
+
     const { error } = await supabase.from('template_items').delete().eq('id', itemId)
     if (error) {
-      alert(error.message)
-      return
+      setRows(snapshot)
+      throw error
     }
-    await mergeTemplateRow(openId)
   }
 
   async function renameTemplateItem(itemId, label) {
     await updateTemplateItemLabel(itemId, label)
+    await mergeTemplateRow(openId)
+  }
+
+  async function archiveTemplate(templateId) {
+    const { error } = await supabase.from('templates').update({ archived: true }).eq('id', templateId)
+    if (error) { alert(error.message); return }
+    setRows(prev => prev.map(r => r.id === templateId ? { ...r, archived: true } : r))
+    if (openId === templateId) setOpenId(null)
+  }
+
+  async function unarchiveTemplate(templateId) {
+    const { error } = await supabase.from('templates').update({ archived: false }).eq('id', templateId)
+    if (error) { alert(error.message); return }
+    setRows(prev => prev.map(r => r.id === templateId ? { ...r, archived: false } : r))
+  }
+
+  async function deleteTemplate(templateId) {
+    if (!window.confirm('Delete template? Existing trips are unaffected.')) return
+    const { error } = await supabase.from('templates').delete().eq('id', templateId)
+    if (error) { alert(error.message); return }
+    setRows(prev => prev.filter(r => r.id !== templateId))
+    if (openId === templateId) setOpenId(null)
+  }
+
+  async function duplicateTemplate(templateId) {
+    const src = rows.find(r => r.id === templateId)
+    if (!src || !household?.id) return
+    const newName = `${src.name} copy`
+    // Create template
+    const { data: newTpl, error: te } = await supabase
+      .from('templates').insert({ household_id: household.id, name: newName, icon: src.icon ?? null })
+      .select('id').single()
+    if (te) { alert(te.message); return }
+    // Copy sections → subcategories → items
+    for (const sec of (src.template_sections || [])) {
+      const { data: newSec, error: se } = await supabase
+        .from('template_sections')
+        .insert({ template_id: newTpl.id, section_type: sec.section_type, name: sec.name, member_id: sec.member_id ?? null, sort_order: sec.sort_order ?? 0 })
+        .select('id').single()
+      if (se) continue
+      for (const sub of (sec.template_subcategories || [])) {
+        const { data: newSub, error: sube } = await supabase
+          .from('template_subcategories')
+          .insert({ section_id: newSec.id, name: sub.name, sort_order: sub.sort_order ?? 0 })
+          .select('id').single()
+        if (sube) continue
+        const items = (sub.template_items || []).map(it => ({ subcategory_id: newSub.id, label: it.label, sort_order: it.sort_order ?? 0 }))
+        if (items.length) await supabase.from('template_items').insert(items)
+      }
+    }
+    await load()
+  }
+
+  async function duplicateSection(sectionId, name) {
+    const trimmed = name.trim()
+    if (!trimmed || !openId) return
+    const tpl = rows.find(r => r.id === openId)
+    const sec = (tpl?.template_sections || []).find(s => s.id === sectionId)
+    if (!sec) return
+    const maxSo = (tpl.template_sections || []).reduce((m, s) => Math.max(m, s.sort_order ?? 0), 0)
+    const { data: newSec, error: se } = await supabase
+      .from('template_sections')
+      .insert({ template_id: openId, section_type: sec.section_type, name: trimmed, member_id: null, sort_order: maxSo + 1 })
+      .select('id').single()
+    if (se) { alert(se.message); return }
+    for (const sub of (sec.template_subcategories || [])) {
+      const { data: newSub, error: sube } = await supabase
+        .from('template_subcategories')
+        .insert({ section_id: newSec.id, name: sub.name, sort_order: sub.sort_order ?? 0 })
+        .select('id').single()
+      if (sube) continue
+      const items = (sub.template_items || []).map(it => ({ subcategory_id: newSub.id, label: it.label, sort_order: it.sort_order ?? 0 }))
+      if (items.length) await supabase.from('template_items').insert(items)
+    }
+    setDuplicatingSectionId(null)
+    setDuplicateSectionDraft('')
     await mergeTemplateRow(openId)
   }
 
@@ -642,7 +742,7 @@ export default function TemplatesScreen() {
           <p className="text-13 text-content-hint">No templates yet.</p>
         ) : (
           <div className="space-y-2">
-            {rows.map(tpl => {
+            {rows.filter(tpl => !tpl.archived).map(tpl => {
               const Icon = ICON_MAP[tpl.icon] || Plane
               const expanded = openId === tpl.id
               const itemTotal = countTemplateItems(tpl)
@@ -653,27 +753,40 @@ export default function TemplatesScreen() {
                   className="bg-white rounded-card overflow-hidden"
                   style={{ border: '0.5px solid rgba(0,0,0,0.08)' }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => setOpenId(expanded ? null : tpl.id)}
-                    className="w-full flex items-center gap-3 px-3 py-3 text-start"
-                  >
-                    <div
-                      className="rounded-input flex items-center justify-center flex-shrink-0"
-                      style={{ width: 40, height: 40, backgroundColor: '#f1efe8', color: '#6b6b6b' }}
+                  <div className="flex items-center gap-1 px-3 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(expanded ? null : tpl.id)}
+                      className="flex flex-1 items-center gap-3 text-start min-w-0"
                     >
-                      <Icon size={18} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-14 font-medium text-content-primary truncate">{tpl.name}</p>
-                      <p className="text-11 text-content-secondary">{itemTotal} items</p>
-                    </div>
+                      <div
+                        className="rounded-input flex items-center justify-center flex-shrink-0"
+                        style={{ width: 40, height: 40, backgroundColor: '#f1efe8', color: '#6b6b6b' }}
+                      >
+                        <Icon size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-14 font-medium text-content-primary truncate">{tpl.name}</p>
+                        <p className="text-11 text-content-secondary">{itemTotal} items</p>
+                      </div>
+                    </button>
                     {expanded ? (
-                      <ChevronUp size={18} className="text-content-hint" />
+                      <ChevronUp size={18} className="text-content-hint flex-shrink-0" onClick={() => setOpenId(null)} style={{ cursor: 'pointer' }} />
                     ) : (
-                      <ChevronDown size={18} className="text-content-hint" />
+                      <ChevronDown size={18} className="text-content-hint flex-shrink-0" onClick={() => setOpenId(tpl.id)} style={{ cursor: 'pointer' }} />
                     )}
-                  </button>
+                    <ActionMenu
+                      buttonSize={28}
+                      iconSize={16}
+                      buttonStyle={{ color: '#6b6b6b' }}
+                      items={[
+                        { label: 'Rename', onClick: () => { setEditingNameId(tpl.id); setEditNameValue(tpl.name); setOpenId(tpl.id) } },
+                        { label: 'Duplicate template', onClick: () => duplicateTemplate(tpl.id) },
+                        { label: 'Archive', onClick: () => archiveTemplate(tpl.id) },
+                        { label: 'Delete', onClick: () => deleteTemplate(tpl.id), danger: true },
+                      ]}
+                    />
+                  </div>
 
                   {expanded && (
                     <DndContext
@@ -682,12 +795,17 @@ export default function TemplatesScreen() {
                       onDragEnd={e => handleTemplateDragEnd(tpl, e)}
                     >
                     <div className="px-3 pb-3 border-t border-[rgba(0,0,0,0.06)] pt-3 space-y-4">
-                      {editingNameId === tpl.id ? (
+                      {editingNameId === tpl.id && (
                         <div className="flex gap-2">
                           <input
                             value={editNameValue}
                             onChange={e => setEditNameValue(e.target.value)}
                             className="flex-1 rounded-input border border-[#e0ddd8] px-2 py-1.5 text-13"
+                            autoFocus
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveTemplateName(tpl.id)
+                              if (e.key === 'Escape') setEditingNameId(null)
+                            }}
                           />
                           <button
                             type="button"
@@ -704,18 +822,6 @@ export default function TemplatesScreen() {
                             Cancel
                           </button>
                         </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingNameId(tpl.id)
-                            setEditNameValue(tpl.name)
-                          }}
-                          className="text-12"
-                          style={{ color: '#2d6fb5' }}
-                        >
-                          Rename template
-                        </button>
                       )}
 
                       {(() => {
@@ -732,8 +838,8 @@ export default function TemplatesScreen() {
                         return (
                           <>
                             {sortedSections.map(sec => (
+                              <Fragment key={sec.id}>
                               <SectionCard
-                                key={sec.id}
                                 mode="template"
                                 workingTemplateId={tpl.id}
                                 section={mapTemplateSectionForCard(sec, members)}
@@ -744,10 +850,44 @@ export default function TemplatesScreen() {
                                 onRemoveCategory={removeTemplateCategoryRow}
                                 quickAddTemplateItem={appendTemplateItem}
                                 onRemoveItem={removeTemplateItem}
+                                onRemoveItemError={() => showToast("Couldn't delete — try again")}
+                                onDuplicateSection={id => { setDuplicatingSectionId(id); setDuplicateSectionDraft('') }}
                                 onUpdateItemLabel={renameTemplateItem}
                                 onRenameSectionHeader={updateTemplateSectionName}
                                 onRemoveSectionCard={removeTemplateSectionById}
                               />
+                              {duplicatingSectionId === sec.id && (
+                                <div className="flex items-center gap-2 px-1 py-2">
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    value={duplicateSectionDraft}
+                                    onChange={e => setDuplicateSectionDraft(e.target.value)}
+                                    placeholder="New section name…"
+                                    className="flex-1 min-w-0 rounded-input border border-[#e0ddd8] bg-white px-2 py-1.5 text-13 focus:outline-none focus:border-navy"
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter' && duplicateSectionDraft.trim()) duplicateSection(sec.id, duplicateSectionDraft)
+                                      if (e.key === 'Escape') { setDuplicatingSectionId(null); setDuplicateSectionDraft('') }
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={!duplicateSectionDraft.trim()}
+                                    onClick={() => duplicateSection(sec.id, duplicateSectionDraft)}
+                                    className="text-12 font-medium text-white bg-navy rounded-input px-3 py-1.5 disabled:opacity-40"
+                                  >
+                                    Create
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setDuplicatingSectionId(null); setDuplicateSectionDraft('') }}
+                                    className="flex-shrink-0 p-1 border-0 bg-transparent text-content-hint cursor-pointer inline-flex items-center justify-center"
+                                  >
+                                    <X size={16} strokeWidth={2} />
+                                  </button>
+                                </div>
+                              )}
+                              </Fragment>
                             ))}
 
                             <div
@@ -888,7 +1028,78 @@ export default function TemplatesScreen() {
             })}
           </div>
         )}
+
+        {/* Archived templates section */}
+        {rows.filter(r => r.archived).length > 0 && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setArchivedOpen(o => !o)}
+              className="flex items-center gap-2 text-13 text-content-secondary mb-2 bg-transparent border-0 cursor-pointer p-0"
+            >
+              <ChevronDown
+                size={16}
+                style={{ transition: 'transform 200ms ease', transform: archivedOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              />
+              Archived ({rows.filter(r => r.archived).length})
+            </button>
+            {archivedOpen && (
+              <div className="space-y-2">
+                {rows.filter(r => r.archived).map(tpl => {
+                  const Icon = ICON_MAP[tpl.icon] || Plane
+                  const itemTotal = countTemplateItems(tpl)
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="bg-white rounded-card overflow-hidden"
+                      style={{ border: '0.5px solid rgba(0,0,0,0.08)', opacity: 0.7 }}
+                    >
+                      <div className="flex items-center gap-1 px-3 py-3">
+                        <div className="flex flex-1 items-center gap-3 min-w-0">
+                          <div
+                            className="rounded-input flex items-center justify-center flex-shrink-0"
+                            style={{ width: 40, height: 40, backgroundColor: '#f1efe8', color: '#9a9a9a' }}
+                          >
+                            <Icon size={18} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-14 font-medium text-content-secondary truncate">{tpl.name}</p>
+                            <p className="text-11 text-content-hint">{itemTotal} items · archived</p>
+                          </div>
+                        </div>
+                        <ActionMenu
+                          buttonSize={28}
+                          iconSize={16}
+                          buttonStyle={{ color: '#9a9a9a' }}
+                          items={[
+                            { label: 'Unarchive', onClick: () => unarchiveTemplate(tpl.id) },
+                            { label: 'Delete', onClick: () => deleteTemplate(tpl.id), danger: true },
+                          ]}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Bottom toast */}
+      {toastMsg && (
+        <div
+          style={{
+            position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+            backgroundColor: '#1a1a1a', color: '#fff', fontSize: 13,
+            padding: '8px 16px', borderRadius: 8, zIndex: 9999,
+            pointerEvents: 'none', whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+          }}
+        >
+          {toastMsg}
+        </div>
+      )}
     </div>
   )
 }

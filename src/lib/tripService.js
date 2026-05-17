@@ -525,7 +525,20 @@ export async function createTripFromWizard(opts) {
   const { error: ttErr } = await supabase.from('trip_travellers').insert(ttRows)
   if (ttErr) throw ttErr
 
-  await createChecklistFromTemplate(supabase, tripId, templateId, memberIds)
+  if (templateId) {
+    await createChecklistFromTemplate(supabase, tripId, templateId, memberIds)
+  } else {
+    // Scratch trip — one Misc. shared section with empty Items category
+    const { data: miscSec, error: msErr } = await supabase
+      .from('checklist_sections')
+      .insert({ trip_id: tripId, section_type: 'shared', name: TEMPLATE_MISC_SECTION_NAME, member_id: null, sort_order: 0 })
+      .select('id').single()
+    if (msErr) throw msErr
+    const { error: subErr } = await supabase.from('checklist_subcategories').insert({
+      section_id: miscSec.id, name: DEFAULT_BUCKET_SUBCATEGORY_NAME, sort_order: 0, is_manually_added: true,
+    })
+    if (subErr) throw subErr
+  }
 
   const { count: secCount, error: scErr } = await supabase
     .from('checklist_sections')

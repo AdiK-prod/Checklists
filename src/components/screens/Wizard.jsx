@@ -36,6 +36,7 @@ export default function Wizard() {
 
   const [step, setStep]                         = useState(1)
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
+  const [scratchMode, setScratchMode]           = useState(false)
   const [selectedTravellers, setSelectedTravellers] = useState(new Set())
   const [generating, setGenerating]           = useState(false)
   const [tripFields, setTripFields]           = useState({
@@ -84,7 +85,7 @@ export default function Wizard() {
       setFieldErrors(e)
       if (Object.keys(e).length) return
     }
-    if (step === 2 && selectedTravellers.size === 0) return
+    if (step === 2 && selectedTravellers.size === 0 && !scratchMode) return
     setStep(s => Math.min(s + 1, 3))
   }
 
@@ -139,8 +140,9 @@ export default function Wizard() {
   }
 
   async function generateTrip() {
-    if (!household?.id || !user?.id || !selectedTemplateId) return
-    if (selectedTravellers.size === 0) return
+    if (!household?.id || !user?.id) return
+    if (!scratchMode && !selectedTemplateId) return
+    if (selectedTravellers.size === 0 && !scratchMode) return
     if (generateInFlightRef.current) return
 
     // Validate Step 3 before generating
@@ -161,7 +163,7 @@ export default function Wizard() {
       const { tripId } = await createTripFromWizard({
         householdId:   household.id,
         userId:        user.id,
-        templateId:    selectedTemplateId,
+        templateId:    scratchMode ? null : selectedTemplateId,
         memberIds:     [...selectedTravellers],
         destination:   tripFields.destination.trim(),
         datesFrom:     tripFields.datesFrom,
@@ -236,7 +238,9 @@ export default function Wizard() {
               <Step1Template
                 templates={templates}
                 selectedId={selectedTemplateId}
-                onSelect={setSelectedTemplateId}
+                onSelect={id => { setSelectedTemplateId(id); setScratchMode(false) }}
+                scratchMode={scratchMode}
+                onScratch={() => { setScratchMode(true); setSelectedTemplateId(null) }}
               />
             )
           )}
@@ -248,6 +252,7 @@ export default function Wizard() {
                 members={members}
                 selected={selectedTravellers}
                 onToggle={toggleTraveller}
+                scratchMode={scratchMode}
               />
             )
           )}
@@ -269,7 +274,7 @@ export default function Wizard() {
           type="button"
           disabled={
             generating ||
-            (step === 2 && selectedTravellers.size === 0)
+            (step === 2 && selectedTravellers.size === 0 && !scratchMode)
           }
           onClick={isGenerateStep ? generateTrip : goNext}
           className="w-full flex items-center justify-center gap-2 rounded-button py-[13px] text-btn font-medium text-white bg-navy hover:bg-navy-hover transition-colors disabled:opacity-60"

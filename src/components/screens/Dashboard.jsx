@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Plus, Settings } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useTrips } from '../../hooks/useTrips'
@@ -11,9 +11,12 @@ import TripCard from '../ui/TripCard'
 import { SkeletonCard } from '../ui/Skeleton'
 import { refreshWeatherForUpcomingTrips } from '../../lib/weatherService'
 import EditTripSheet from '../ui/EditTripSheet'
+import FeedbackSheet from '../ui/FeedbackSheet'
+import ActionMenu from '../ui/ActionMenu'
+import { supabase } from '../../lib/supabase'
 
 export default function Dashboard() {
-  const { household } = useAuth()
+  const { household, user } = useAuth()
   const navigate      = useNavigate()
   const { trips, loading, error, deleteTrip, refetch } = useTrips(household?.id)
   const { members, loading: membersLoading } = useHousehold(household?.id)
@@ -27,8 +30,37 @@ export default function Dashboard() {
     refetchTemplates,
   )
 
-  const [editingTrip, setEditingTrip] = useState(null)
-  const [localTrips,  setLocalTrips]  = useState(null)
+  const [editingTrip, setEditingTrip]     = useState(null)
+  const [localTrips,  setLocalTrips]      = useState(null)
+  const [feedbackOpen, setFeedbackOpen]   = useState(false)
+  const [toastMsg, setToastMsg]           = useState(null)
+  const toastTimerRef                     = useRef(null)
+  const [userMember, setUserMember]       = useState(null)
+
+  const showToast = useCallback(msg => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToastMsg(msg)
+    toastTimerRef.current = setTimeout(() => setToastMsg(null), 2000)
+  }, [])
+
+  // Resolve auth user → household member for avatar colour
+  useEffect(() => {
+    if (!household?.id || !user?.id) return
+    supabase
+      .from('household_members')
+      .select('id, name, avatar_colour')
+      .eq('household_id', household.id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => setUserMember(data ?? null))
+  }, [household?.id, user?.id])
+
+  const avatarColour = userMember?.avatar_colour ?? '#3d6494'
+  const avatarInitials = (() => {
+    if (userMember?.name) return userMember.name.slice(0, 2).toUpperCase()
+    const email = user?.email ?? ''
+    return email.slice(0, 2).toUpperCase()
+  })()
 
   const tripList = localTrips ?? (Array.isArray(trips) ? trips : [])
 
@@ -73,14 +105,22 @@ export default function Dashboard() {
         </div>
 
         <div className="flex items-start gap-2 flex-shrink-0 mt-0.5">
-          <button
-            type="button"
-            onClick={() => navigate('/settings', { state: { direction: 'forward' } })}
-            aria-label="Settings"
-            className="w-9 h-9 rounded-full border border-[#e0ddd8] flex items-center justify-center text-content-secondary hover:bg-[#f1efe8] transition-colors"
-          >
-            <Settings size={18} strokeWidth={2} />
-          </button>
+          {/* Avatar user menu */}
+          <ActionMenu
+            renderTrigger={() => (
+              <div
+                aria-label="User menu"
+                className="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-13"
+                style={{ backgroundColor: avatarColour }}
+              >
+                {avatarInitials}
+              </div>
+            )}
+            items={[
+              { label: 'Settings', onClick: () => navigate('/settings', { state: { direction: 'forward' } }) },
+              { label: 'Give feedback', onClick: () => setFeedbackOpen(true) },
+            ]}
+          />
           <button
             type="button"
             onClick={() => navigate('/new', { state: { direction: 'forward' } })}
@@ -148,6 +188,28 @@ export default function Dashboard() {
         onClose={() => setEditingTrip(null)}
         onSaved={handleTripSaved}
       />
+
+      <FeedbackSheet
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        userId={user?.id}
+        householdId={household?.id}
+        onSuccess={(msg) => showToast(msg)}
+      />
+
+      {toastMsg && (
+        <div
+          style={{
+            position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+            backgroundColor: '#1a1a1a', color: '#fff', fontSize: 13,
+            padding: '8px 16px', borderRadius: 8, zIndex: 9999,
+            pointerEvents: 'none', whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+          }}
+        >
+          {toastMsg}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 
-export default function Step2Travellers({ members, selected, onToggle }) {
+export default function Step2Travellers({ members, selected, onToggle, scratchMode }) {
   const selectedCount = selected.size
 
   return (
@@ -50,9 +50,15 @@ export default function Step2Travellers({ members, selected, onToggle }) {
       <p className="text-13 text-content-secondary mt-3 text-center">
         {selectedCount} traveller{selectedCount !== 1 ? 's' : ''} · each gets their own checklist
       </p>
-      <p className="text-12 text-content-secondary mt-2 text-center leading-snug max-w-[320px] mx-auto">
-        Shared sections from this template are always included.
-      </p>
+      {scratchMode && selectedCount === 0 ? (
+        <p className="text-12 mt-2 text-center leading-snug max-w-[320px] mx-auto" style={{ color: '#6b6b6b' }}>
+          No travellers selected — you can add personal sections later.
+        </p>
+      ) : (
+        <p className="text-12 text-content-secondary mt-2 text-center leading-snug max-w-[320px] mx-auto">
+          Shared sections from this template are always included.
+        </p>
+      )}
     </div>
   )
 }

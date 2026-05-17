@@ -38,6 +38,7 @@ import { useDirection } from '../../contexts/DirectionContext'
 import { flipIcon } from '../../lib/dirUtils'
 import { getCachedWeather } from '../../lib/weatherService'
 import { deleteTrip } from '../../lib/tripService'
+import { exportChecklistPDF } from '../../lib/exportChecklistPDF'
 import Avatar from '../ui/Avatar'
 import { Skeleton, SkeletonPersonCard } from '../ui/Skeleton'
 import { formatTripDates, computeNights } from '../../lib/utils'
@@ -309,6 +310,7 @@ export default function TripPage() {
               buttonStyle={{ color: 'rgba(255,255,255,0.7)', flexShrink: 0 }}
               items={[
                 { label: 'Edit', onClick: () => setEditSheetOpen(true) },
+                { label: 'Export as PDF', onClick: () => exportChecklistPDF(displayTrip, trip.sections || []) },
                 { label: 'Remove', onClick: handleDeleteTrip, danger: true },
               ]}
             />

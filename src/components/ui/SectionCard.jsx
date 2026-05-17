@@ -421,11 +421,12 @@ function TripItemRow({
   )
 }
 
-/** Template editing row — visual checkbox stub, gripped reorder, × remove, tap-to-edit label */
+/** Template editing row — swipe/hover delete with inline confirmation */
 function SortableTemplateItemRow({
   item,
   showBorder,
   onRemove,
+  onRemoveError,
   isEditingLabel,
   editDraft,
   onEditDraftChange,
@@ -449,68 +450,189 @@ function SortableTemplateItemRow({
     transition,
     opacity: isDragging ? 0.6 : undefined,
     zIndex: isDragging ? 2 : undefined,
-    position: isDragging ? 'relative' : undefined,
+  }
+
+  const [confirmOpen, setConfirmOpen]     = useState(false)
+  const [swipeRevealed, setSwipeRevealed] = useState(false)
+  const [hovered, setHovered]             = useState(false)
+  const confirmTimerRef                   = useRef(null)
+  const touchStartX                       = useRef(null)
+  const touchStartY                       = useRef(null)
+
+  useEffect(() => () => { if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current) }, [])
+  useEffect(() => { setSwipeRevealed(false); setConfirmOpen(false) }, [item.id])
+
+  const openConfirm = () => {
+    setSwipeRevealed(false)
+    setConfirmOpen(true)
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+    confirmTimerRef.current = setTimeout(() => setConfirmOpen(false), 4000)
+  }
+
+  const cancelConfirm = () => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+    setConfirmOpen(false)
+  }
+
+  const handleConfirmRemove = async () => {
+    cancelConfirm()
+    try { await onRemove() } catch { onRemoveError?.() }
+  }
+
+  const handleTouchStart = e => {
+    touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
+  }
+
+  const handleTouchEnd = e => {
+    const x0 = touchStartX.current, y0 = touchStartY.current
+    touchStartX.current = null; touchStartY.current = null
+    if (x0 == null) return
+    const dx = x0 - e.changedTouches[0].clientX
+    const dy = Math.abs(e.changedTouches[0].clientY - y0)
+    if (dx > 40 && dy < 20) setSwipeRevealed(true)
+    else if (dx < -20) setSwipeRevealed(false)
+  }
+
+  const borderStyle = showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}
+
+  // Inline confirmation state replaces normal row content
+  if (confirmOpen) {
+    return (
+      <div ref={setNodeRef} style={{ ...dndStyle, ...borderStyle }} className="flex items-center gap-2 py-[9px]">
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          className="flex-shrink-0 cursor-grab touch-none p-0 bg-transparent border-0 inline-flex items-center justify-center"
+          style={{ opacity: 0.3 }}
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={14} />
+        </button>
+        <div className="w-[18px] h-[18px] rounded-[4px] flex-shrink-0" style={{ border: '1.5px solid rgba(0,0,0,0.2)' }} aria-hidden />
+        <span className="flex-1 text-item-label min-w-0 text-start line-through" style={{ color: '#9a9a9a' }}>
+          {item.label}
+        </span>
+        <button
+          type="button"
+          onClick={cancelConfirm}
+          className="flex-shrink-0 bg-transparent border-0 cursor-pointer px-1"
+          style={{ fontSize: 12, color: '#6b6b6b' }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleConfirmRemove}
+          className="flex-shrink-0 bg-transparent border-0 cursor-pointer px-1 font-medium"
+          style={{ fontSize: 12, color: '#e24b4a' }}
+        >
+          Remove
+        </button>
+      </div>
+    )
   }
 
   return (
     <div
       ref={setNodeRef}
-      className={['flex items-center gap-2 py-[9px] list-none', !showBorder ? '' : ''].join(' ')}
-      style={{
-        ...dndStyle,
-        ...(showBorder ? { borderBottom: '0.5px solid rgba(0,0,0,0.06)' } : {}),
-      }}
+      className="relative overflow-hidden"
+      style={{ ...dndStyle, ...borderStyle }}
     >
-      <button
-        type="button"
-        ref={setActivatorNodeRef}
-        className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
-        aria-label="Drag to reorder"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={14} style={{ opacity: 0.3 }} />
-      </button>
       <div
-        className="w-[18px] h-[18px] rounded-[4px] flex-shrink-0"
-        style={{ border: '1.5px solid rgba(0,0,0,0.2)' }}
-        aria-hidden
-      />
-      {isEditingLabel ? (
-        <input
-          type="text"
-          autoFocus
-          value={editDraft}
-          onChange={e => onEditDraftChange(e.target.value)}
-          onBlur={() => {
-            if (!editCancelRef.current) onEditCommit()
-            editCancelRef.current = false
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
-            if (e.key === 'Escape') onEditCancel(item.label)
-          }}
-          className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
-          style={{ background: '#f5f4f1', borderRadius: 8 }}
-        />
-      ) : (
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={() => onStartEdit(item)}
-          onKeyDown={e => e.key === 'Enter' && onStartEdit(item)}
-          className="flex-1 text-item-label min-w-0 text-content-primary text-start cursor-text bg-transparent border-0 p-0"
+        className="flex items-center gap-2 py-[9px] pr-1"
+        style={{
+          transform: swipeRevealed ? 'translateX(-56px)' : 'translateX(0)',
+          transition: 'transform 200ms ease',
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing touch-none text-content-hint p-0 bg-transparent border-0 inline-flex items-center justify-center"
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
         >
-          {item.label}
-        </span>
-      )}
+          <GripVertical size={14} style={{ opacity: 0.3 }} />
+        </button>
+        <div
+          className="w-[18px] h-[18px] rounded-[4px] flex-shrink-0"
+          style={{ border: '1.5px solid rgba(0,0,0,0.2)' }}
+          aria-hidden
+        />
+        {isEditingLabel ? (
+          <input
+            type="text"
+            autoFocus
+            value={editDraft}
+            onChange={e => onEditDraftChange(e.target.value)}
+            onBlur={() => {
+              if (!editCancelRef.current) onEditCommit()
+              editCancelRef.current = false
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { editCancelRef.current = false; e.currentTarget.blur() }
+              if (e.key === 'Escape') onEditCancel(item.label)
+            }}
+            className="flex-1 min-w-0 text-item-label rounded-input border-0 outline-none px-1.5 py-0.5"
+            style={{ background: '#f5f4f1', borderRadius: 8 }}
+          />
+        ) : (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={() => onStartEdit(item)}
+            onKeyDown={e => e.key === 'Enter' && onStartEdit(item)}
+            className="flex-1 text-item-label min-w-0 text-content-primary text-start cursor-text bg-transparent border-0 p-0"
+          >
+            {item.label}
+          </span>
+        )}
+        {/* Desktop hover × */}
+        <button
+          type="button"
+          onClick={openConfirm}
+          aria-label="Remove item"
+          className="flex-shrink-0 flex items-center justify-center bg-transparent border-0 cursor-pointer rounded"
+          style={{
+            width: 24, height: 24,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? 'auto' : 'none',
+            transition: 'opacity 120ms',
+            color: '#9a9a9a',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#e24b4a' }}
+          onMouseLeave={e => { e.currentTarget.style.color = '#9a9a9a' }}
+        >
+          <X size={14} strokeWidth={2} />
+        </button>
+      </div>
+
+      {/* Mobile swipe-revealed red delete zone */}
       <button
         type="button"
-        onClick={onRemove}
-        className="text-11 text-content-hint bg-transparent border-0 cursor-pointer p-0 flex-shrink-0 leading-none hover:text-[#c03434]"
+        onClick={openConfirm}
         aria-label="Remove item"
+        className="absolute top-0 right-0 bottom-0 flex items-center justify-center"
+        style={{
+          width: 56,
+          backgroundColor: '#e24b4a',
+          borderRadius: '0 8px 8px 0',
+          border: 'none',
+          cursor: 'pointer',
+          opacity: swipeRevealed ? 1 : 0,
+          pointerEvents: swipeRevealed ? 'auto' : 'none',
+          transition: 'opacity 200ms ease',
+        }}
       >
-        ×
+        <X size={16} color="white" strokeWidth={2.5} />
       </button>
     </div>
   )
@@ -532,6 +654,7 @@ export default function SectionCard({
   onSaveToTemplate,
   onRemoveItem,
   onRemoveItemError,
+  onDuplicateSection,
   onRenameSectionHeader,
   onRemoveSectionCard,
   onUpdateItemLabel,
@@ -827,6 +950,7 @@ export default function SectionCard({
                 item={item}
                 showBorder={index < sortedItems.length - 1}
                 onRemove={() => onRemoveItem(item.id)}
+                onRemoveError={onRemoveItemError}
                 isEditingLabel={editingItemId === item.id}
                 editDraft={editingItemId === item.id ? editingItemDraft : ''}
                 onEditDraftChange={setEditingItemDraft}
@@ -1097,6 +1221,9 @@ export default function SectionCard({
                   },
                 },
                 { label: 'Rename', onClick: () => setSectionNameEditOpen(true) },
+                ...(!isTrip && onDuplicateSection
+                  ? [{ label: 'Duplicate section', onClick: () => onDuplicateSection(section.id) }]
+                  : []),
                 { label: 'Remove', onClick: handleRemoveSection, danger: true },
               ]}
             />

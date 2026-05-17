@@ -2,7 +2,7 @@ import { Plane, Car, Moon, Check } from 'lucide-react'
 
 const ICON_MAP = { Plane, Car, Moon }
 
-export default function Step1Template({ templates, selectedId, onSelect }) {
+export default function Step1Template({ templates, selectedId, onSelect, scratchMode, onScratch }) {
   return (
     <div className="pt-1">
       <p className="text-11 font-medium uppercase text-content-secondary tracking-[0.08em] mb-3">
@@ -11,13 +11,13 @@ export default function Step1Template({ templates, selectedId, onSelect }) {
 
       <div className="space-y-2">
         {templates.map(tpl => {
-          const isSelected = tpl.id === selectedId
+          const isSelected = !scratchMode && tpl.id === selectedId
           const Icon = ICON_MAP[tpl.icon] || Plane
 
           return (
             <button
               key={tpl.id}
-              onClick={() => onSelect(tpl.id)}
+              onClick={() => { onSelect(tpl.id) }}
               className="w-full flex items-center gap-3 bg-white rounded-card p-3 text-left transition-colors"
               style={{ border: `1.5px solid ${isSelected ? '#3d6494' : '#e0ddd8'}` }}
             >
@@ -53,6 +53,17 @@ export default function Step1Template({ templates, selectedId, onSelect }) {
             </button>
           )
         })}
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-[rgba(0,0,0,0.07)] flex items-center justify-center">
+        <button
+          type="button"
+          onClick={onScratch}
+          className="bg-transparent border-0 cursor-pointer p-0"
+          style={{ fontSize: 13, color: scratchMode ? '#3d6494' : '#3d6494', fontWeight: scratchMode ? 600 : 400 }}
+        >
+          {scratchMode ? '✓ Start from scratch' : 'Or start from scratch →'}
+        </button>
       </div>
 
       <p className="text-center text-12 text-content-hint mt-2 leading-snug">

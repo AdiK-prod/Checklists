@@ -3,17 +3,18 @@ import { MoreVertical } from 'lucide-react'
 import { useDirection } from '../../contexts/DirectionContext'
 
 /**
- * Tap-activated action menu with a MoreVertical (•••) trigger button.
+ * Tap-activated action menu.
  * Renders the dropdown via a fixed-position overlay so it escapes any
  * overflow-hidden ancestor (e.g. rounded card wrappers).
  * Aligns to the correct edge in both LTR and RTL.
  *
  * @param {{ label: string, onClick: () => void, danger?: boolean }[]} items
- * @param {number}  [buttonSize=28]  – px, used for width & height of trigger
- * @param {number}  [iconSize=16]    – px, MoreVertical icon size
- * @param {object}  [buttonStyle={}] – extra inline styles on trigger button
+ * @param {number}   [buttonSize=28]     – px, used for width & height of default trigger
+ * @param {number}   [iconSize=16]       – px, MoreVertical icon size
+ * @param {object}   [buttonStyle={}]    – extra inline styles on trigger button
+ * @param {function} [renderTrigger]     – optional render prop: (ref, handleOpen) => ReactNode
  */
-export default function ActionMenu({ items, buttonSize = 28, iconSize = 16, buttonStyle = {} }) {
+export default function ActionMenu({ items, buttonSize = 28, iconSize = 16, buttonStyle = {}, renderTrigger }) {
   const { dir }         = useDirection()
   const [open, setOpen] = useState(false)
   const [pos, setPos]   = useState({})
@@ -52,18 +53,24 @@ export default function ActionMenu({ items, buttonSize = 28, iconSize = 16, butt
 
   return (
     <>
-      <button
-        ref={btnRef}
-        type="button"
-        aria-label="More options"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={handleOpen}
-        style={{ width: buttonSize, height: buttonSize, borderRadius: 6, flexShrink: 0, ...buttonStyle }}
-        className="flex items-center justify-center bg-transparent border-0 cursor-pointer"
-      >
-        <MoreVertical size={iconSize} />
-      </button>
+      {renderTrigger ? (
+        <div ref={btnRef} onClick={handleOpen} style={{ display: 'inline-flex', cursor: 'pointer' }}>
+          {renderTrigger()}
+        </div>
+      ) : (
+        <button
+          ref={btnRef}
+          type="button"
+          aria-label="More options"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={handleOpen}
+          style={{ width: buttonSize, height: buttonSize, borderRadius: 6, flexShrink: 0, ...buttonStyle }}
+          className="flex items-center justify-center bg-transparent border-0 cursor-pointer"
+        >
+          <MoreVertical size={iconSize} />
+        </button>
+      )}
 
       {open && (
         <div

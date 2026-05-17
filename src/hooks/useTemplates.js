@@ -47,6 +47,7 @@ export function useTemplates(householdId) {
         `,
       )
       .eq('household_id', householdId)
+      .eq('archived', false)
       .order('created_at')
 
     if (qErr) {
